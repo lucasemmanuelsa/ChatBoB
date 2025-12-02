@@ -7,13 +7,13 @@ from app.core.schema import Schema
 from app.core.extractor import ExtractorAgent
 from app.graph.state import AgentState
 
-schema = Schema.load_from_file("examples/schema_example.json")
+schema = Schema.load_from_file("/home/lucas/tcc/chat-data-extractor/examples/schema_example.json")
 agent = ExtractorAgent(schema)
 
 if "state" not in st.session_state:
     st.session_state.state = AgentState()
 
-st.title("🧠 Agente Extrator – Demo TCC")
+st.title("🤖 ChatBob")
 
 msg = st.chat_input("Digite algo...")
 
