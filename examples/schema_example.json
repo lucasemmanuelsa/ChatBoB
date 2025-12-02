@@ -1,0 +1,24 @@
+{
+  "fields": {
+    "generos_musicais_favoritos": {
+      "description": "Gêneros musicais que o usuário mais aprecia e costuma ouvir com maior frequência.",
+      "type": "string",
+      "required": true
+    },
+    "generos_musicais_avessos": {
+      "description": "Gêneros musicais que o usuário menos gosta de ouvir.",
+      "type": "string",
+      "required": true
+    },
+    "artistas_favoritos": {
+      "description": "Artistas preferidos do usuário cujas músicas ele costuma ouvir com mais frequência.",
+      "type": "string",
+      "required": true
+    },
+    "musicas_favoritas": {
+      "description": "Músicas favoritas do usuário, geralmente até cinco.",
+      "type": "string",
+      "required": true
+    }
+  }
+}

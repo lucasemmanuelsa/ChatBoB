@@ -1,0 +1,1 @@
+#interface simples para testes

@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "created_at": "2025-11-26T19:00:00Z",
+    "source": "chat",
+    "schema_version": "1.0.0"
+  },
+  "data": {
+    "generos_musicais_favoritos": [
+      "Rock",
+      "MPB"
+    ],
+    "generos_musicais_avessos": [
+      "Funk",
+      "Pagode"
+    ],
+    "artistas_favoritos": [
+      "Legião Urbana",
+      "Djavan"
+    ],
+    "musicas_favoritas": [
+      "Tempo Perdido",
+      "Oceano"
+    ]
+  },
+  "missing_fields": []
+}
