@@ -21,7 +21,7 @@ def extract_from_message(state):
         }
     )
 
-    return {"extracted": resp}
+    return {"extracted": resp, "next": "missing"}
 
 def identify_missing_fields(state):
     schema_fields = state["schema"].fields
@@ -29,7 +29,12 @@ def identify_missing_fields(state):
 
     missing = [f for f in schema_fields if f not in collected]
 
-    return {"missing_fields": missing}
+    out = {"missing_fields": missing}
+    if missing:
+        out["next"] = "ask"
+    else:
+        out["next"] = "final"
+    return out
 
 def generate_question(state):
     missing = state["missing_fields"]
