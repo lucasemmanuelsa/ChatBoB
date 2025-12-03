@@ -7,7 +7,7 @@ from app.core.prompts import (
 
 llm = get_llm()
 
-def extract_from_message(state):
+def extractor_node(state):
     user_message = state["last_user_message"]
     schema = state["schema"]
     collected = state.get("collected", {})
@@ -23,7 +23,7 @@ def extract_from_message(state):
 
     return {"extracted": resp, "next": "missing"}
 
-def identify_missing_fields(state):
+def missing_node(state):
     schema_fields = state["schema"].fields
     collected = state.get("collected", {})
 
@@ -36,7 +36,7 @@ def identify_missing_fields(state):
         out["next"] = "final"
     return out
 
-def generate_question(state):
+def ask_node(state):
     missing = state["missing_fields"]
     if not missing:
         return {}
@@ -55,7 +55,7 @@ def generate_question(state):
 
     return {"question_to_ask": response}
 
-def generate_final_json(state):
+def output_node(state):
     resp = llm.invoke(
         FINAL_JSON_PROMPT,
         input_variables={

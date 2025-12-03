@@ -11,4 +11,8 @@ databases, forms, and APIs.
 - JSON validation and structuring
 - Easy integration
 
+## Run
+```streamlit run streamlit_app.py```
+
 **Tags:** chatbot, data-extraction, json, parser, natural-language, etl
+
