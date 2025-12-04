@@ -1,3 +1,17 @@
+STARTER_PROMPT = """
+Você é um agente que decide se deve iniciar a extração de informações.
+
+Receba:
+- O contexto da conversa: {context_messages}
+- A última pergunta feita pelo sistema: {last_asked_question}
+- A última mensagem do usuário: {last_user_message}
+
+Tarefa:
+- Classifique como "EXTRACT": se a mensagem do usuário contém informações suficientes para iniciar a extração com base na última pergunta feita pelo sistema.
+- Classifique como "ASK": Se não tiver pergunta feita pelo sistema ou se a mensagem do usuário não contém informações suficientes.
+
+Retorne SOMENTE "EXTRACT" ou "ASK", sem explicações.
+"""
 EXTRACT_FROM_MESSAGE_PROMPT = """
 Você é um agente extrator de informações.
 
