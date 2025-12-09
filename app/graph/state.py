@@ -13,3 +13,4 @@ class AgentState(TypedDict):
     context_messages: Optional[list] = None
     status_finished: bool = False
     next: str
+    logs: Optional[list] = None

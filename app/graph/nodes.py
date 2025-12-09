@@ -1,3 +1,5 @@
+from langchain.prompts import ChatPromptTemplate
+
 from app.core.llm import get_llm
 from app.core.prompts import (
     STARTER_PROMPT,
@@ -9,29 +11,34 @@ from app.core.prompts import (
 llm = get_llm()
 
 def starter_node(state):
-    intent = llm.invoke(
-        STARTER_PROMPT,
-        input_variables={
-            "field": "starter",
-            "description": "Initial prompt to start the extraction process.",
-        }
-    )
+    template = ChatPromptTemplate.from_template(STARTER_PROMPT)
+    chain = template | llm
+
+    state["logs"].append("STARTER: Iniciando classificação de intenção...")
+
+    intent = chain.invoke({
+            "context_messages" : state.get("context_messages", ""),
+            "last_asked_question": state.get("last_asked_question", ""),
+            "last_user_message": state.get("last_user_message", "")
+    }
+    ).strip().lower()
 
     if 'EXTRACT' in intent:
-        return {"next": "extractor"}
-    return {"next": "ask"}
+        return {"next": "extractor", "logs": state["logs"]}
+    return {"next": "ask", "logs": state["logs"]}
 
 def extractor_node(state):
+
     user_message = state["last_user_message"]
     schema = state["schema"]
     collected = state.get("collected", {})
-
-    resp = llm.invoke(
-        EXTRACT_FROM_MESSAGE_PROMPT,
-        input_variables={
-            "schema": schema.fields,
-            "message": user_message,
-            "collected": collected
+    state['logs'].append("EXTRACTOR: extraindo informações...")
+    template = ChatPromptTemplate.from_template(EXTRACT_FROM_MESSAGE_PROMPT)
+    chain = template | llm
+    resp = chain.invoke({
+        "schema": schema.fields,
+        "message": user_message,
+        "collected": collected
         }
     )
 

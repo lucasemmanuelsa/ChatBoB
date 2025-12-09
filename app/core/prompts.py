@@ -27,8 +27,7 @@ Tarefa:
 - Normalize o texto.
 
 IMPORTANTE:
-- Você só pode extrair informações da ULTIMA mensagem do usuário.
-- NÃO use nada de mensagens anteriores além do que está salvo no estado.
+- Você só pode extrair informações da ÚLTIMA mensagem do usuário.
 - NÃO avance para outro campo ainda não perguntado.
 - NÃO faça mais de uma pergunta por vez.
 
