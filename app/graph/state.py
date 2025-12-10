@@ -5,7 +5,6 @@ class AgentState(TypedDict):
     last_user_message: Optional[str] = None
     last_asked_question: Optional[str] = None
     schema: Optional[Any] = None
-    collected: Dict[str, Any] = {}
     extracted: Optional[Dict[str, Any]] = None
     missing_fields: Optional[list] = None
     question_to_ask: Optional[str] = None

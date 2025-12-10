@@ -31,14 +31,17 @@ def extractor_node(state):
 
     user_message = state["last_user_message"]
     schema = state["schema"]
-    collected = state.get("collected", {})
+    extracted = state.get("extracted", {})
+
     state['logs'].append("EXTRACTOR: extraindo informações...")
     template = ChatPromptTemplate.from_template(EXTRACT_FROM_MESSAGE_PROMPT)
+
     chain = template | llm
+
     resp = chain.invoke({
         "schema": schema.fields,
         "message": user_message,
-        "collected": collected
+        "extracted": extracted
         }
     )
 

@@ -16,22 +16,23 @@ EXTRACT_FROM_MESSAGE_PROMPT = """
 Você é um agente extrator de informações.
 
 Receba:
-- O dicionário de dados (schema)
-- A última mensagem do usuário
-- Os dados já extraídos até agora
+- O dicionário de dados (schema): {schema}
+- A última mensagem do usuário: {last_user_message}
+- A última pergunta feita ao usuário: {last_asked_question}
+- O contexto da conversa: {context_messages}
+- Os dados já extraídos até agora: {extracted}
 
 Tarefa:
-- Identifique se a mensagem contém informações que preenchem algum campo do schema.
-- Se sim, extraia os valores em formato JSON.
+- Identifique se a mensagem do usuário contém informações que preenchem o campo do schema que está extremamente relacionado com a última pergunta feita ao usuário.
+- Se sim, extraia os valores em formato JSON seguindo a mesma estrutura do schema mas adicionando um campo response. Se os dados extraidos até agora tiver vazio, adicione APENAS 
 - Use bom senso: se a descrição indicar pluralidade, extraia uma lista.
 - Normalize o texto.
 
 IMPORTANTE:
 - Você só pode extrair informações da ÚLTIMA mensagem do usuário.
 - NÃO avance para outro campo ainda não perguntado.
-- NÃO faça mais de uma pergunta por vez.
 
-Retorne SOMENTE o JSON, sem explicações.
+Retorne SOMENTE o JSON com os dados extraidos até agora, sem explicações.
 """
 
 GENERATE_QUESTION_PROMPT = """
@@ -62,4 +63,8 @@ Tarefa:
   "data": {...},
   "missing_fields": [...]
 }
+
+IMPORTANTE: o data deve contemplar TODOS os campos do schema, preenchendo com null os que não foram coletados.
+
+Retorne apenas o JSON final, sem explicações.
 """
