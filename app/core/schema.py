@@ -2,7 +2,8 @@ import json
 
 class Schema:
     def __init__(self, schema_dict: dict):
-        self.fields = schema_dict.get("fields", {})
+        # Usa o JSON exatamente como foi carregado; não exige chave "fields".
+        self.fields = schema_dict
 
     @staticmethod
     def load_from_file(path: str):

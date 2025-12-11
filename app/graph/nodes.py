@@ -1,7 +1,9 @@
 from langchain.prompts import ChatPromptTemplate
-
+from langgraph.graph import END
+import json
 from app.core.llm import get_llm
 from app.core.prompts import (
+    IDENTIFY_MISSING_FIELDS_PROMPT,
     STARTER_PROMPT,
     EXTRACT_FROM_MESSAGE_PROMPT,
     GENERATE_QUESTION_PROMPT,
@@ -17,21 +19,24 @@ def starter_node(state):
     state["logs"].append("STARTER: Iniciando classificação de intenção...")
 
     intent = chain.invoke({
-            "context_messages" : state.get("context_messages", ""),
-            "last_asked_question": state.get("last_asked_question", ""),
-            "last_user_message": state.get("last_user_message", "")
+            "context_messages" : state.get("context_messages"),
+            "last_asked_question": state.get("last_asked_question"),
+            "last_user_message": state.get("last_user_message")
     }
-    ).strip().lower()
+    ).content.strip().upper()
+
+    state["logs"].append(f"STARTER: Intenção classificada como {intent}")
+
+    state["context_messages"].append({
+        "role": "user",
+        "content": state["last_user_message"]
+    })
 
     if 'EXTRACT' in intent:
-        return {"next": "extractor", "logs": state["logs"]}
-    return {"next": "ask", "logs": state["logs"]}
+        return {"next": "extractor", "context_messages": state["context_messages"], "logs": state["logs"]}
+    return {"next": "ask", "context_messages": state["context_messages"], "logs": state["logs"]}
 
 def extractor_node(state):
-
-    user_message = state["last_user_message"]
-    schema = state["schema"]
-    extracted = state.get("extracted", {})
 
     state['logs'].append("EXTRACTOR: extraindo informações...")
     template = ChatPromptTemplate.from_template(EXTRACT_FROM_MESSAGE_PROMPT)
@@ -39,53 +44,99 @@ def extractor_node(state):
     chain = template | llm
 
     resp = chain.invoke({
-        "schema": schema.fields,
-        "message": user_message,
-        "extracted": extracted
+        "schema": state["schema"].fields,
+        "last_user_message": state["last_user_message"],
+        "last_asked_question": state["last_asked_question"],
+        "extracted": state["extracted"]
         }
-    )
+    ).content.strip()
 
-    return {"extracted": resp, "next": "missing"}
+    try:
+        partial = json.loads(resp)
+    except Exception:
+        partial = {}
+    
+    extracted = state["extracted"]
+    extracted.update(partial)
+
+    state['logs'].append(f"EXTRACTOR: extraído {partial}")
+    return {"extracted": extracted, "next": "missing", "logs": state["logs"]}
 
 def missing_node(state):
-    schema_fields = state["schema"].fields
-    collected = state.get("collected", {})
+    state["logs"].append("MISSING: verificando campos faltantes via LLM...")
+    
+    template = ChatPromptTemplate.from_template(IDENTIFY_MISSING_FIELDS_PROMPT)
+    chain = template | llm
 
-    missing = [f for f in schema_fields if f not in collected]
+    resp = chain.invoke({
+        "schema": state["schema"].fields,
+        "extracted": state["extracted"]
+    }).content.strip()
 
-    out = {"missing_fields": missing}
-    if missing:
-        out["next"] = "ask"
-    else:
-        out["next"] = "final"
+
+    try:
+        parsed = json.loads(resp)
+        missing = parsed.get("missing", [])
+    except Exception:
+        schema_fields = state["schema"].fields
+        extracted = state.get("extracted", {})
+        missing = [field for field in schema_fields if field not in extracted or not extracted[field]]
+
+    state["logs"].append(f"MISSING: campos faltantes identificados: {missing}")
+
+    out = {"missing_fields": missing, "logs": state["logs"]}
+    out["next"] = "ask" if missing else "output"
     return out
 
 def ask_node(state):
-    missing = state["missing_fields"]
+
+    state["logs"].append("ASK: gerando pergunta para campo faltante...")
+    missing = state.get("missing_fields", [])
+
     if not missing:
-        return {}
+        state["logs"].append("ASK: campo vazio")
 
-    field = missing[0]
-    description = state["schema"].fields[field]["description"]
+    template = ChatPromptTemplate.from_template(GENERATE_QUESTION_PROMPT)
+    chain = template | llm
 
-    response = llm.invoke(
-        GENERATE_QUESTION_PROMPT,
-        input_variables={
-            "field": field,
-            "description": description,
-            "collected": state.get("collected", {})
+    raw = chain.invoke({
+        "context_messages": state["context_messages"],
+        "extracted": state["extracted"],
+        "missing_fields": missing,
+        "schema": state["schema"].fields,
+        "last_asked_question": state["last_asked_question"],
+        "last_user_message": state["last_user_message"]
+    }).content.strip()
+
+    state["context_messages"].append({
+        "role": "assistant",
+        "content": raw
+    })
+
+    state["logs"].append(f"ASK: pergunta gerada: {raw}")
+
+    return {
+        "question_to_ask": raw,
+        "last_asked_question": raw,
+        "context_messages": state["context_messages"],
+        "logs": state["logs"]
         }
-    )
-
-    return {"question_to_ask": response}
 
 def output_node(state):
-    resp = llm.invoke(
-        FINAL_JSON_PROMPT,
-        input_variables={
-            "schema": state["schema"].fields,
-            "collected": state.get("collected", {}),
-            "missing": state.get("missing_fields", [])
-        }
-    )
-    return {"final_json": resp}
+    template = ChatPromptTemplate.from_template(FINAL_JSON_PROMPT)
+    chain = template | llm
+    state["logs"].append("OUTPUT: gerando JSON final...")
+    resp = chain.invoke({
+        "schema": state["schema"].fields,
+        "extracted": state["extracted"],
+        "missing": state["missing_fields"]
+    }).content.strip()
+
+    state["logs"].append(f"OUTPUT: JSON final gerado: {resp}")
+
+    try:
+        resp = json.loads(resp)
+    except Exception:
+        resp = {}
+
+    return {"final_json": resp, "status_finished": True, "logs": state["logs"], "next": END}

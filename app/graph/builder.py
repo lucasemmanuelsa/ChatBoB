@@ -18,10 +18,14 @@ def build_graph():
     graph.add_node("ask", ask_node)
     graph.add_node("output", output_node)
 
-    graph.set_entry_point("extractor")
+    # Entrypoint: iniciar no nó "starter" para que o fluxo seja decidido pelo starter
+    graph.set_entry_point("starter")
+    graph.add_edge("starter", "extractor")
+    graph.add_edge("starter", "ask")
     graph.add_edge("extractor", "missing")
     graph.add_edge("missing", "ask")
     graph.add_edge("missing", "output")
+
 
     graph.add_edge("output", END)
     return graph.compile()

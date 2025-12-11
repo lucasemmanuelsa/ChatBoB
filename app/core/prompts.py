@@ -130,26 +130,53 @@ Lembre-se: Você é um extrator inteligente. Tente interpretar e normalizar, mas
 Retorne APENAS o JSON, sem explicações.
 """
 
-GENERATE_QUESTION_PROMPT = """
-Você é um agente que formula perguntas para completar campos faltantes.
+IDENTIFY_MISSING_FIELDS_PROMPT = """
+Você é um assistente que identifica campos faltantes.
 
-Receba:
-- O nome do campo
-- A descrição do campo
-- Dados coletados até agora
+Entrada:
+- Schema (campos esperados): {schema}
+- Dados já extraídos: {extracted}
 
 Tarefa:
-- Gere uma pergunta clara, natural e objetiva.
-- Se o campo AGORA PARECE aceitar múltiplas respostas, convide o usuário a responder em lista.
+Compare os campos do schema com os dados extraídos e retorne APENAS um JSON no formato:
+{{"missing": ["campo1", "campo2", ...]}}
+
+Regras:
+- Inclua campos que ainda não foram respondidos, estão vazios ou incompletos
+- Se todos os campos estão preenchidos, retorne {{"missing": []}}
+
+Retorne apenas o JSON, sem explicações.
+"""
+
+GENERATE_QUESTION_PROMPT =  """
+Você é um assistente conversacional. Sua tarefa é fazer APENAS a próxima pergunta para coletar informações que ainda faltam.
+
+CONTEXTO:
+- historico de mensagens: {context_messages}
+- Campos que já foram coletados: {collected_fields}
+- Campos que ainda faltam: {missing_fields}
+- Schema com descrições: {schema}
+- Última pergunta que você fez: "{last_asked_question}"
+- Última resposta do usuário: "{last_user_message}"
+
+INSTRUÇÃO:
+Escolha UM dos campos que faltam ({missing_fields}) e faça uma pergunta natural sobre ele, como se estivesse em uma conversa normal.
+
+REGRAS:
+- Use a descrição do campo no schema para saber exatamente o que perguntar
+- Se for começo de conversa, inicie de forma natural (os campos que ainda faltam podem vir vazios e você pode escolher qualquer campo)
+- Se já teve diálogo, continue a partir da última resposta
+- Mantenha a conversa fluida
+
+Gere APENAS a pergunta, sem explicações.
 """
 
 FINAL_JSON_PROMPT = """
 Você é um agente que monta o JSON final universal.
 
-Receba:
-- Campos do schema
-- Dados coletados
-- Inferências sobre listas e limites
+Entrada:
+- schema: {schema}
+- Dados coletados: {extracted}
 
 Tarefa:
 - Gere um JSON final no formato:
@@ -157,6 +184,20 @@ Tarefa:
   "metadata": {...},
   "data": {...},
   "missing_fields": [...]
+}
+
+Exemplo:
+{
+"metadata": {
+"created_at": "<ISO8601 UTC>",
+"source": "<source>",
+"schema_version": "<schema_version>"
+},
+"data": {
+"<campo>": <valor ou lista>,
+...
+},
+"missing_fields": [ "<campo1>", "<campo2>", ... ]
 }
 
 IMPORTANTE: o data deve contemplar TODOS os campos do schema, preenchendo com null os que não foram coletados.

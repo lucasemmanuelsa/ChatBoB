@@ -1,15 +1,15 @@
-from typing import Dict, Any, Optional, TypedDict
-from pydantic import BaseModel
+from typing import Dict, Any, TypedDict
+from app.core.schema import Schema
 
 class AgentState(TypedDict):
-    last_user_message: Optional[str] = None
-    last_asked_question: Optional[str] = None
-    schema: Optional[Any] = None
-    extracted: Optional[Dict[str, Any]] = None
-    missing_fields: Optional[list] = None
-    question_to_ask: Optional[str] = None
-    final_json: Optional[Dict[str, Any]] = None
-    context_messages: Optional[list] = None
-    status_finished: bool = False
+    last_user_message: str
+    last_asked_question: str
+    schema: Schema
+    extracted: Dict[str, Any]
+    missing_fields: list
+    question_to_ask: str
+    final_json: Dict[str, Any]
+    context_messages: list
+    status_finished: bool
     next: str
-    logs: Optional[list] = None
+    logs: list
