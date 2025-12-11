@@ -180,25 +180,25 @@ Entrada:
 
 Tarefa:
 - Gere um JSON final no formato:
-{
-  "metadata": {...},
-  "data": {...},
-  "missing_fields": [...]
-}
+{{
+    "metadata": {{...}},
+    "data": {{...}},
+    "missing_fields": [...]
+}}
 
 Exemplo:
-{
-"metadata": {
+{{
+"metadata": {{
 "created_at": "<ISO8601 UTC>",
 "source": "<source>",
 "schema_version": "<schema_version>"
-},
-"data": {
+}},
+"data": {{
 "<campo>": <valor ou lista>,
 ...
-},
+}},
 "missing_fields": [ "<campo1>", "<campo2>", ... ]
-}
+}}
 
 IMPORTANTE: o data deve contemplar TODOS os campos do schema, preenchendo com null os que não foram coletados.
 
