@@ -27,14 +27,10 @@ def starter_node(state):
 
     state["logs"].append(f"STARTER: Intenção classificada como {intent}")
 
-    state["context_messages"].append({
-        "role": "user",
-        "content": state["last_user_message"]
-    })
 
     if 'EXTRACT' in intent:
-        return {"next": "extractor", "context_messages": state["context_messages"], "logs": state["logs"]}
-    return {"next": "ask", "context_messages": state["context_messages"], "logs": state["logs"]}
+        return {"next": "extractor", "logs": state["logs"]}
+    return {"next": "ask", "logs": state["logs"]}
 
 def extractor_node(state):
 
@@ -119,6 +115,7 @@ def ask_node(state):
         "question_to_ask": raw,
         "last_asked_question": raw,
         "context_messages": state["context_messages"],
+        "next": None,
         "logs": state["logs"]
         }
 

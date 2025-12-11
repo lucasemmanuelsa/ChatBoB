@@ -20,11 +20,26 @@ def build_graph():
 
     # Entrypoint: iniciar no nó "starter" para que o fluxo seja decidido pelo starter
     graph.set_entry_point("starter")
-    graph.add_edge("starter", "extractor")
-    graph.add_edge("starter", "ask")
+
+    graph.add_conditional_edges(
+        "starter",
+        lambda state: state["next"],
+        {
+            "extractor": "extractor",
+            "ask": "ask",
+        }
+    )
+
     graph.add_edge("extractor", "missing")
-    graph.add_edge("missing", "ask")
-    graph.add_edge("missing", "output")
+    
+    graph.add_conditional_edges(
+        "missing",
+        lambda state: state["next"],
+        {
+            "ask": "ask",
+            "output": "output"
+        }
+    )
 
 
     graph.add_edge("output", END)

@@ -9,5 +9,10 @@ class ExtractorAgent:
 
     def feed_message(self, message: str, state: dict):
         state["last_user_message"] = message
+
+        state["context_messages"].append({
+            "role": "user",
+            "content": state["last_user_message"]
+        })
         state["schema"] = self.schema
         return self.graph.invoke(state)

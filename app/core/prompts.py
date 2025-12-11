@@ -153,10 +153,10 @@ Você é um assistente conversacional. Sua tarefa é fazer APENAS a próxima per
 
 CONTEXTO:
 - historico de mensagens: {context_messages}
-- Campos que já foram coletados: {collected_fields}
+- Campos que já foram coletados: {extracted}
 - Campos que ainda faltam: {missing_fields}
 - Schema com descrições: {schema}
-- Última pergunta que você fez: "{last_asked_question}"
+- Última pergunta que o sistema fez: "{last_asked_question}"
 - Última resposta do usuário: "{last_user_message}"
 
 INSTRUÇÃO:
