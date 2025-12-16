@@ -3,7 +3,7 @@ import os
 import sys
 from typing import Dict, Any
 
-# Garantir import local do pacote `app`
+# Caminho para o repo
 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if repo_root not in sys.path:
     sys.path.append(repo_root)
@@ -11,13 +11,14 @@ if repo_root not in sys.path:
 from app.core.schema import Schema
 from app.core.extractor import ExtractorAgent
 
-st.set_page_config(page_title="Extractor Agent", layout="wide")
+st.set_page_config(page_title="ChatBoB", page_icon="🤖")
 
-# Inicialização do agente e do estado
+# Carrega schema e agente
 schema_path = os.path.join(repo_root, "examples", "schema_example.json")
 schema = Schema.load_from_file(schema_path)
 agent = ExtractorAgent(schema)
 
+# Estado inicial padrão
 DEFAULT_STATE: Dict[str, Any] = {
     "last_user_message": "",
     "last_asked_question": "",
@@ -30,64 +31,86 @@ DEFAULT_STATE: Dict[str, Any] = {
     "status_finished": False,
     "next": None,
     "logs": [],
+    "messages": []  # mensagens exibidas no chat
 }
 
+# Inicializa state + mensagem inicial automática
 if "state" not in st.session_state:
     st.session_state.state = DEFAULT_STATE.copy()
-
-agent = agent
+    st.session_state.state["messages"].append({
+        "role": "assistant",
+        "content": "Olá! Sou o **ChatBoB**, seu agente extrator inteligente. Para começarmos: **qual é o seu nome?**"
+    })
 
 
 def run_graph_with_input(user_message: str):
-    """Atualiza o state com a mensagem do usuário e invoca o agente.
-
-    Mescla apenas as chaves retornadas pelo agente no state existente.
-    """
+    """Envia mensagem para o agente e salva os resultados no state."""
     state = st.session_state.state
+
+    # salva no histórico visual
+    state["messages"].append({"role": "user", "content": user_message})
+
+    # salva no contexto interno
     state["last_user_message"] = user_message
-    state.setdefault("context_messages", []).append({"role": "user", "content": user_message})
+    state["context_messages"].append({"role": "user", "content": user_message})
 
-    # feed_message do seu agent espera o state e retorna updates
+    # o agente gera updates
     updates = agent.feed_message(user_message, state)
-
     if isinstance(updates, dict):
         state.update(updates)
+
+    # se o agente fez alguma pergunta, ela aparece no chat
+    if state.get("question_to_ask"):
+        state["messages"].append({
+            "role": "assistant",
+            "content": state["question_to_ask"]
+        })
 
     st.session_state.state = state
 
 
-st.title("🧠 Agente Extrator — Chat")
+st.title("🤖 ChatBoB – Agente Extrator")
 
 state = st.session_state.state
 
-# Se o agente deixou uma pergunta, mostrar e esperar resposta
-if state.get("question_to_ask"):
-    st.subheader("❓ O agente precisa de mais informações:")
-    st.info(state["question_to_ask"])
-    answer = st.text_input("Sua resposta:", key="agent_answer")
-    if st.button("Enviar resposta", key="btn_answer"):
-        # limpar indicador de pergunta e enviar resposta ao agente
-        state["question_to_ask"] = None
-        run_graph_with_input(answer)
+# -------------------------
+#  EXIBE TODAS AS MENSAGENS DO CHAT
+# -------------------------
+for msg in state["messages"]:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-else:
-    user_text = st.text_input("Mensagem:", key="user_message")
-    if st.button("Enviar", key="btn_main"):
-        run_graph_with_input(user_text)
+# -------------------------
+#  INPUT DO USUÁRIO
+# -------------------------
+user_message = st.chat_input("Digite sua mensagem...")
 
-st.divider()
-st.subheader("📌 Estado Atual do Agente")
+if user_message:
+    with st.chat_message("user"):
+        st.markdown(user_message)
 
-st.json({
-    "extracted": state.get("extracted"),
-    "missing_fields": state.get("missing_fields"),
-    "next": state.get("next"),
-})
+    # indicador visual de processamento
+    with st.spinner("ChatBoB está pensando..."):
+        run_graph_with_input(user_message)
 
-if state.get("last_asked_question"):
-    st.write("**Última pergunta gerada:**", state["last_asked_question"])
+    # recarrega para exibir mensagem nova
+    st.rerun()
 
-st.divider()
-st.subheader("📜 Logs")
-for log in state.get("logs", []):
-    st.write("•", log)
+# -------------------------
+#  BLOCO DEBAIXO DO CHAT — STATE + LOGS
+# -------------------------
+
+st.markdown("---")
+
+with st.expander("📌 Estado Atual do Agente"):
+    st.json({
+        "extracted": state.get("extracted"),
+        "missing_fields": state.get("missing_fields"),
+        "next": state.get("next"),
+        "last_asked_question": state.get("last_asked_question"),
+        "status_finished": state.get("status_finished"),
+    })
+
+with st.expander("📜 Logs do Agente"):
+    for log in state.get("logs", []):
+        st.write("•", log)
