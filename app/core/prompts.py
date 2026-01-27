@@ -160,7 +160,7 @@ CONTEXTO:
 - Última resposta do usuário: "{last_user_message}"
 
 INSTRUÇÃO:
-Escolha UM dos campos que faltam ({missing_fields}) e faça uma pergunta natural sobre ele, como se estivesse em uma conversa normal.
+Escolha UM dos campos que faltam ({missing_fields}) e faça uma pergunta natural sobre ele, como se estivesse em uma conversa normal e AMIGÁVEL.
 
 REGRAS:
 - Use a descrição do campo no schema para saber exatamente o que perguntar
