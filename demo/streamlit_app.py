@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import sys
+import json
 from typing import Dict, Any
 
 # Caminho para o repo
@@ -60,7 +61,7 @@ def run_graph_with_input(user_message: str):
         state.update(updates)
 
     # se o agente fez alguma pergunta, ela aparece no chat
-    if state.get("question_to_ask"):
+    if state.get("question_to_ask") and not state.get("status_finished"):
         state["messages"].append({
             "role": "assistant",
             "content": state["question_to_ask"]
@@ -80,21 +81,38 @@ for msg in state["messages"]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+# Se o agente finalizou, mostra o JSON final e uma mensagem de conclusão
+if state.get("status_finished") and state.get("final_json"):
+    # Verifica se já não foi exibida a mensagem final
+    last_message = state["messages"][-1] if state["messages"] else {}
+    if last_message.get("role") != "assistant" or "extração finalizada" not in last_message.get("content", "").lower():
+        final_message = "🎉 **Extração finalizada!** Aqui está o resultado estruturado:\n\n```json\n" + json.dumps(state["final_json"], indent=2, ensure_ascii=False) + "\n```"
+        state["messages"].append({
+            "role": "assistant", 
+            "content": final_message
+        })
+        st.rerun()
+
 # -------------------------
 #  INPUT DO USUÁRIO
 # -------------------------
-user_message = st.chat_input("Digite sua mensagem...")
+if not state.get("status_finished"):
+    user_message = st.chat_input("Digite sua mensagem...")
 
-if user_message:
-    with st.chat_message("user"):
-        st.markdown(user_message)
+    if user_message:
+        with st.chat_message("user"):
+            st.markdown(user_message)
 
-    # indicador visual de processamento
-    with st.spinner("ChatBoB está pensando..."):
-        run_graph_with_input(user_message)
+        # indicador visual de processamento
+        with st.spinner("ChatBoB está pensando..."):
+            run_graph_with_input(user_message)
 
-    # recarrega para exibir mensagem nova
-    st.rerun()
+        # recarrega para exibir mensagem nova
+        st.rerun()
+else:
+    # Mostra mensagem quando finalizado
+    st.info("✅ Extração concluída! O agente coletou todas as informações necessárias.")
+
 
 # -------------------------
 #  BLOCO DEBAIXO DO CHAT — STATE + LOGS

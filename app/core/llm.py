@@ -2,7 +2,7 @@ from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 def get_llm():
     return ChatOpenAI(
-        model="gpt-4o-mini",
+        model="gpt-4",
         openai_api_key="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",
         temperature=0.2
     )
