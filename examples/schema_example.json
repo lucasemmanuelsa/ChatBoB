@@ -17,6 +17,6 @@
   "musicas_favoritas": {
     "description": "Até cinco músicas favoritas do usuário, as quais ele costuma ouvir com mais frequência",
     "type": "List",
-    "required": true
+    "required": false
   }
 }

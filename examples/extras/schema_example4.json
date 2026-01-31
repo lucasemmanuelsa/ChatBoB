@@ -1,0 +1,22 @@
+{
+  "generos_favoritos": {
+    "description": "De dois a quatro gêneros de filmes que o usuário mais gosta de assistir. Os gêneros não devem ser redundantes (ex: ação e ação/aventura).",
+    "type": "List",
+    "required": true
+  },
+  "generos_evitar": {
+    "description": "Um ou dois gêneros de filmes que o usuário evita assistir, mesmo quando são populares ou bem avaliados.",
+    "type": "List",
+    "required": true
+  },
+  "filmes_favoritos": {
+    "description": "Até três filmes favoritos do usuário. Caso o usuário mencione mais de três, o agente deve ajudá-lo a priorizar.",
+    "type": "List",
+    "required": true
+  },
+  "diretores_preferidos": {
+    "description": "Um ou mais diretores que o usuário aprecia, podendo repetir diretores já associados aos filmes favoritos.",
+    "type": "List",
+    "required": false
+  }
+}

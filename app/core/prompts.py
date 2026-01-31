@@ -142,7 +142,7 @@ Compare os campos do schema com os dados extraídos e retorne APENAS um JSON no 
 {{"missing": ["campo1", "campo2", ...]}}
 
 Regras:
-- Inclua campos que ainda não foram respondidos, estão vazios ou incompletos
+- Inclua campos que ainda não estão presentes nos dados já extraídos.
 - Se todos os campos estão preenchidos, retorne {{"missing": []}}
 
 Retorne apenas o JSON, sem explicações.
