@@ -1,6 +1,6 @@
 {
   "generos_musicais_favoritos": {
-    "description": "Um ou mais gêneros musicais que o usuário mais aprecia e costuma ouvir com maior frequência",
+    "description": "dois ou mais gêneros musicais que o usuário mais aprecia e costuma ouvir com maior frequência",
     "type": "List",
     "required": true
   },

@@ -19,9 +19,10 @@ def starter_node(state):
     state["logs"].append("STARTER: Iniciando classificação de intenção...")
 
     intent = chain.invoke({
-            "context_messages" : state.get("context_messages"),
+            "context_messages": state.get("context_messages"),
             "last_asked_question": state.get("last_asked_question"),
-            "last_user_message": state.get("last_user_message")
+            "last_user_message": state.get("last_user_message"),
+            "schema": state["schema"].fields
     }
     ).content.strip().upper()
 
@@ -41,6 +42,7 @@ def extractor_node(state):
 
     resp = chain.invoke({
         "schema": state["schema"].fields,
+        "context_messages" : state.get("context_messages"),
         "last_user_message": state["last_user_message"],
         "last_asked_question": state["last_asked_question"],
         "extracted": state["extracted"]
@@ -64,9 +66,10 @@ def missing_node(state):
     template = ChatPromptTemplate.from_template(IDENTIFY_MISSING_FIELDS_PROMPT)
     chain = template | llm
 
-    resp = chain.invoke({
+    resp = chain.invoke({ 
         "schema": state["schema"].fields,
-        "extracted": state["extracted"]
+        "extracted": state["extracted"],
+        "context_messages": state.get("context_messages")
     }).content.strip()
 
 
@@ -126,7 +129,6 @@ def output_node(state):
     resp = chain.invoke({
         "schema": state["schema"].fields,
         "extracted": state["extracted"],
-        "missing": state["missing_fields"]
     }).content.strip()
 
     state["logs"].append(f"OUTPUT: JSON final gerado: {resp}")

@@ -5,10 +5,33 @@ Receba:
 - O contexto da conversa: {context_messages}
 - A última pergunta feita pelo sistema: {last_asked_question}
 - A última mensagem do usuário: {last_user_message}
+- Schema com campos esperados, descrições e restrições: {schema}
 
-Tarefa:
-- Classifique como "EXTRACT": se a mensagem do usuário contém informações suficientes para iniciar a extração com base na última pergunta feita pelo sistema.
-- Classifique como "ASK": Se não tiver pergunta feita pelo sistema ou se a mensagem do usuário não contém informações suficientes.
+Objetivo:
+Decidir se o agente EXTRACT já consegue extrair informações VÁLIDAS E COMPLETAS
+seguindo rigorosamente as restrições do schema, a partir do histórico da conversa,
+SEM precisar fazer novas perguntas ao usuário.
+
+Regras obrigatórias:
+1. Considere TODO o histórico da conversa, não apenas a última mensagem.
+2. Um campo do schema só pode ser considerado extraível se:
+   - A informação estiver explicitamente presente no histórico;
+   - A informação estiver de acordo com a descrição do campo no schema;
+   - TODAS as restrições do campo forem atendidas integralmente, incluindo:
+     • tipo de dado
+     • valores permitidos
+     • obrigatoriedade
+     • quantidade mínima e máxima (cardinalidade).
+3. Informações parciais, incompletas ou que não satisfaçam a quantidade mínima
+   exigida pelo schema NÃO autorizam a extração.
+4. Se nenhum campo puder ser extraído de forma completa e sem ambiguidade,
+   a extração NÃO deve iniciar.
+5. A ausência de uma pergunta anterior do sistema implica que a extração NÃO deve iniciar.
+
+Classificação:
+- Retorne "EXTRACT" se pelo menos um campo do schema puder ser completamente
+  e corretamente extraído com base no histórico.
+- Retorne "ASK" caso contrário.
 
 Retorne SOMENTE "EXTRACT" ou "ASK", sem explicações.
 """
@@ -18,13 +41,14 @@ Você é um agente extrator de informações. VERIFIQUE CONFORMIDADE, TENTE NORM
 SCHEMA (campos e suas descrições): {schema}
 
 CONTEXTO CRÍTICO:
+- HISTÓRICO DE MENSAGENS: {context_messages}
 - ÚLTIMA PERGUNTA DO SISTEMA: "{last_asked_question}"
 - ÚLTIMA MENSAGEM DO USUÁRIO: "{last_user_message}"
 
 PROCESSO DECISÓRIO COM NORMALIZAÇÃO:
 
 PASSO 1: IDENTIFIQUE qual campo do schema está sendo perguntado na ÚLTIMA PERGUNTA
-PASSO 2: VERIFIQUE se a ÚLTIMA MENSAGEM contém informação relacionada a ESSE CAMPO
+PASSO 2: VERIFIQUE se NO HISTÓRICO ou na ÚLTIMA MENSAGEM contém informação relacionada a ESSE CAMPO
 PASSO 3: SE contiver, TENTE NORMALIZAR para atender à DESCRIÇÃO e TYPE do campo
 PASSO 4: EXTRAIA apenas se conseguir normalizar corretamente
 
@@ -36,7 +60,7 @@ NORMALIZAÇÃO INTELLIGENTE (TENTE CONVERTER QUANDO POSSÍVEL):
 
 REGRA PRINCIPAL:
 NÃO EXTRAIA se:
-1. A mensagem NÃO responder à última pergunta
+1. Não for possível IDENTIFICAR informação relacionada ao campo pela ultima mensagem ou pelo histórico
 2. A informação NÃO puder ser normalizada para atender à descrição do campo
 3. O usuário der informação claramente para OUTRO campo não perguntado
 
@@ -131,43 +155,73 @@ Retorne APENAS o JSON, sem explicações.
 """
 
 IDENTIFY_MISSING_FIELDS_PROMPT = """
-Você é um assistente que identifica campos faltantes.
+Você é um assistente que identifica campos que ainda podem ou precisam
+ser perguntados ao usuário.
 
 Entrada:
-- Schema (campos esperados): {schema}
+- Schema (campos esperados, incluindo se são obrigatórios ou não): {schema}
 - Dados já extraídos: {extracted}
+- Histórico da conversa: {context_messages}
 
 Tarefa:
-Compare os campos do schema com os dados extraídos e retorne APENAS um JSON no formato:
-{{"missing": ["campo1", "campo2", ...]}}
+Decidir quais campos devem ser incluídos como "missing".
 
 Regras:
-- Inclua campos que ainda não estão presentes nos dados já extraídos.
-- Se todos os campos estão preenchidos, retorne {{"missing": []}}
+1. Campos obrigatórios (required: true):
+   - Devem ser incluídos em "missing" se não estiverem em "extracted".
+2. Campos não obrigatórios (required: false):
+   - Podem ser incluídos em "missing" SOMENTE se:
+     a) ainda não tiverem sido perguntados ao usuário, E
+     b) o histórico NÃO indicar recusa explícita do usuário.
+3. Se o usuário tiver recusado explicitamente um campo opcional,
+   esse campo NÃO deve aparecer em "missing".
+4. Campos já extraídos nunca devem aparecer em "missing".
 
-Retorne apenas o JSON, sem explicações.
+Formato de saída:
+{{"missing": ["campo1", "campo2", ...]}}
+
+Se nenhum campo satisfizer as condições acima:
+{{"missing": []}}
+
+Retorne APENAS o JSON, sem explicações.
 """
 
 GENERATE_QUESTION_PROMPT =  """
-Você é um assistente conversacional. Sua tarefa é fazer APENAS a próxima pergunta para coletar informações que ainda faltam.
+Você é um agente responsável por formular a PRÓXIMA pergunta do diálogo
+para tornar campos do schema completos e extraíveis.
 
 CONTEXTO:
-- historico de mensagens: {context_messages}
-- Campos que já foram coletados: {extracted}
-- Campos que ainda faltam: {missing_fields}
-- Schema com descrições: {schema}
-- Última pergunta que o sistema fez: "{last_asked_question}"
+- Histórico da conversa: {context_messages}
+- Campos já extraídos (parciais ou completos): {extracted}
+- Campos ainda incompletos ou ausentes: {missing_fields}
+- Schema com descrições e restrições: {schema}
+- Última pergunta feita pelo sistema: "{last_asked_question}"
 - Última resposta do usuário: "{last_user_message}"
 
-INSTRUÇÃO:
-Escolha UM dos campos que faltam ({missing_fields}) e faça uma pergunta natural sobre ele, como se estivesse em uma conversa normal e AMIGÁVEL.
+OBJETIVO:
+Fazer UMA pergunta que permita que, após a resposta do usuário,
+pelo menos um campo atualmente incompleto satisfaça TODAS as
+restrições do schema, sem impor restrições adicionais.
 
-REGRAS:
-- Use a descrição do campo no schema para saber exatamente o que perguntar
-- Se for começo de conversa, inicie de forma natural (os campos que ainda faltam podem vir vazios e você pode escolher qualquer campo)
-- Se já teve diálogo, continue a partir da última resposta
-- Mantenha a conversa fluida
+REGRAS DE ALINHAMENTO COM O SCHEMA:
+1. A pergunta NÃO pode ser mais restritiva que o schema.
+2. Se o campo possuir:
+   - quantidade mínima: deixe explícito o mínimo esperado.
+   - quantidade máxima: deixe explícito que se trata de um limite,
+     e não de uma obrigação.
+3. Nunca exija exatamente N itens quando o schema definir "até N".
+4. Se houver informação parcial, a pergunta deve buscar apenas
+   COMPLETAR o que falta.
 
+FORMULAÇÃO DA PERGUNTA:
+- Pergunte sobre apenas UM campo.
+- Use linguagem natural, clara e amigável.
+- Use expressões como:
+  "até N", "no máximo N", "se quiser, pode citar até N".
+- Evite termos que impliquem obrigação absoluta
+  (ex: "liste cinco", "quais são suas cinco").
+
+SAÍDA:
 Gere APENAS a pergunta, sem explicações.
 """
 
