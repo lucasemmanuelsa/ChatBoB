@@ -51,10 +51,11 @@ def run_graph_with_input(user_message: str):
     """Envia mensagem para o agente e salva os resultados no state."""
     state = st.session_state.state
 
+    # salva no histórico visual
+    state["messages"].append({"role": "user", "content": user_message})
 
     # salva no contexto interno
     state["last_user_message"] = user_message
-    state["context_messages"].append({"role": "user", "content": user_message})
 
     # o agente gera updates
     updates = agent.feed_message(user_message, state)
