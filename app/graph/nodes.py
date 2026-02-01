@@ -53,6 +53,7 @@ def extractor_node(state):
         partial = json.loads(resp)
     except Exception:
         partial = {}
+        state['logs'].append("EXTRACTOR: falha ao parsear JSON, extraído vazio.")
     
     extracted = state["extracted"]
     extracted.update(partial)
@@ -80,6 +81,7 @@ def missing_node(state):
         schema_fields = state["schema"].fields
         extracted = state.get("extracted", {})
         missing = [field for field in schema_fields if field not in extracted or not extracted[field]]
+        state["logs"].append("MISSING: falha ao parsear JSON, usando lógica fallback.")
 
     state["logs"].append(f"MISSING: campos faltantes identificados: {missing}")
 

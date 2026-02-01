@@ -155,27 +155,33 @@ Retorne APENAS o JSON, sem explicações.
 """
 
 IDENTIFY_MISSING_FIELDS_PROMPT = """
-Você é um assistente que identifica campos que ainda podem ou precisam
-ser perguntados ao usuário.
+Você decide quais campos ainda devem ser perguntados ao usuário.
 
 Entrada:
-- Schema (campos esperados, incluindo se são obrigatórios ou não): {schema}
-- Dados já extraídos: {extracted}
+- Schema (inclui required): {schema}
+- Dados extraídos: {extracted}
 - Histórico da conversa: {context_messages}
 
-Tarefa:
-Decidir quais campos devem ser incluídos como "missing".
-
 Regras:
-1. Campos obrigatórios (required: true):
-   - Devem ser incluídos em "missing" se não estiverem em "extracted".
-2. Campos não obrigatórios (required: false):
-   - Podem ser incluídos em "missing" SOMENTE se:
-     a) ainda não tiverem sido perguntados ao usuário, E
-     b) o histórico NÃO indicar recusa explícita do usuário.
-3. Se o usuário tiver recusado explicitamente um campo opcional,
-   esse campo NÃO deve aparecer em "missing".
-4. Campos já extraídos nunca devem aparecer em "missing".
+
+1. Campo obrigatório (required: true):
+   - Está em "missing" se NÃO existir em "extracted".
+
+2. Campo opcional (required: false):
+   - Está em "missing" SOMENTE se:
+     a) NÃO existir em "extracted", E
+     b) ainda NÃO tiver sido perguntado, E
+     c) o usuário NÃO tiver recusado responder.
+
+3. Campo opcional que já possui QUALQUER valor extraído
+   NUNCA deve estar em "missing".
+
+4. Campo opcional recusado explicitamente
+   NUNCA deve estar em "missing".
+
+IMPORTANTE:
+Você deve consultar o histórico da conversa para ver se o campo opcional já foi perguntado.
+Se o campo opcional ja foi perguntado, não insista, não o adicione no missing.
 
 Formato de saída:
 {{"missing": ["campo1", "campo2", ...]}}
@@ -229,32 +235,50 @@ FINAL_JSON_PROMPT = """
 Você é um agente que monta o JSON final universal.
 
 Entrada:
-- schema: {schema}
-- Dados coletados: {extracted}
+- Schema (campos, descrições e obrigatoriedade): {schema}
+- Dados coletados e extraídos: {extracted}
 
 Tarefa:
-- Gere um JSON final no formato:
+Gerar um JSON final no formato:
+
 {{
-    "metadata": {{...}},
-    "data": {{...}},
-    "missing_fields": [...]
+  "metadata": {{ ... }},
+  "data": {{ ... }},
+  "missing_fields": [ ... ]
 }}
 
-Exemplo:
+Regras obrigatórias:
+
+1. O objeto "data" DEVE conter TODOS os campos definidos no schema.
+   - Para campos extraídos, use o valor coletado.
+   - Para campos não extraídos, use null.
+
+2. O campo "missing_fields" deve conter APENAS:
+   - Campos obrigatórios (required: true) que NÃO foram extraídos.
+
+3. Campos NÃO obrigatórios (required: false) NÃO devem aparecer em
+   "missing_fields", mesmo que estejam com valor null em "data".
+
+4. Campos que o usuário recusou explicitamente responder NÃO devem
+   aparecer em "missing_fields".
+
+5. Se todos os campos obrigatórios estiverem presentes, "missing_fields"
+   deve ser uma lista vazia.
+
+Formato esperado:
+
 {{
-"metadata": {{
-"created_at": "<ISO8601 UTC>",
-"source": "<source>",
-"schema_version": "<schema_version>"
-}},
-"data": {{
-"<campo>": <valor ou lista>,
-...
-}},
-"missing_fields": [ "<campo1>", "<campo2>", ... ]
+  "metadata": {{
+    "created_at": "<ISO8601 UTC>",
+    "source": "<source>",
+    "schema_version": "<schema_version>"
+  }},
+  "data": {{
+    "<campo1>": <valor ou null>,
+    "<campo2>": <valor ou null>
+  }},
+  "missing_fields": ["<campo_obrigatorio_faltante>"]
 }}
 
-IMPORTANTE: o data deve contemplar TODOS os campos do schema, preenchendo com null os que não foram coletados.
-
-Retorne apenas o JSON final, sem explicações.
+Retorne APENAS o JSON final, sem explicações.
 """
