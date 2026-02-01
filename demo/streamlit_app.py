@@ -4,6 +4,7 @@ import sys
 import json
 from typing import Dict, Any
 
+
 # Caminho para o repo
 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if repo_root not in sys.path:
@@ -11,6 +12,7 @@ if repo_root not in sys.path:
 
 from app.core.schema import Schema
 from app.core.extractor import ExtractorAgent
+from app.utils.logger import save_session_data
 
 st.set_page_config(page_title="ChatBoB", page_icon="🤖")
 
@@ -32,7 +34,8 @@ DEFAULT_STATE: Dict[str, Any] = {
     "status_finished": False,
     "next": None,
     "logs": [],
-    "messages": []  # mensagens exibidas no chat
+    "messages": [],  # mensagens exibidas no chat
+    "_session_saved": False
 }
 
 # Inicializa state + mensagem inicial automática
@@ -48,8 +51,6 @@ def run_graph_with_input(user_message: str):
     """Envia mensagem para o agente e salva os resultados no state."""
     state = st.session_state.state
 
-    # salva no histórico visual
-    state["messages"].append({"role": "user", "content": user_message})
 
     # salva no contexto interno
     state["last_user_message"] = user_message
@@ -84,6 +85,10 @@ for msg in state["messages"]:
 # Se o agente finalizou, mostra o JSON final e uma mensagem de conclusão
 if state.get("status_finished") and state.get("final_json"):
     # Verifica se já não foi exibida a mensagem final
+    if not state.get("_session_saved", False):
+        save_session_data(state)
+        state["_session_saved"] = True
+
     last_message = state["messages"][-1] if state["messages"] else {}
     if last_message.get("role") != "assistant" or "extração finalizada" not in last_message.get("content", "").lower():
         final_message = "🎉 **Extração finalizada!** Aqui está o resultado estruturado:\n\n```json\n" + json.dumps(state["final_json"], indent=2, ensure_ascii=False) + "\n```"
