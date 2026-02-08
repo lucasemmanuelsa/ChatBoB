@@ -1,22 +1,32 @@
 {
-  "generos_musicais_favoritos": {
-    "description": "dois ou mais gêneros musicais que o usuário mais aprecia e costuma ouvir com maior frequência.",
+  "generos_preferidos": {
+    "description": "Dois ou mais gêneros de filmes ou séries que o usuário mais gosta de assistir.",
     "type": "List",
     "required": true
   },
-  "generos_musicais_avessos": {
-    "description": "Um ou mais gêneros musicais que o usuário menos gosta de ouvir, sendo normalmente sua última opção de escolha",
+  "generos_evitar": {
+    "description": "Um ou mais gêneros audiovisuais que o usuário evita ou não gosta de assistir.",
     "type": "List",
     "required": true
   },
-  "artistas_favoritos": {
-    "description": "Um ou mais artistas preferidos do usuário, cujas músicas ele costuma ouvir com mais frequência.",
+  "horas_semanais_streaming": {
+    "description": "Número aproximado de horas por semana que o usuário passa assistindo filmes ou séries",
+    "type": "Number",
+    "required": true
+  },
+  "filmes_favoritos": {
+    "description": "Até três filmes ou séries favoritos do usuário.",
     "type": "List",
     "required": true
   },
-  "musicas_favoritas": {
-    "description": "Até cinco músicas favoritas do usuário, as quais ele costuma ouvir com mais frequência.",
+  "plataformas_streaming": {
+    "description": "Plataformas de streaming que o usuário mais utiliza (ex: Netflix, Prime Video, Max).",
     "type": "List",
+    "required": true
+  },
+  "subgenero_terror_preferido": {
+    "description": "Subgênero de terror preferido do usuário (ex: psicológico, sobrenatural, slasher). Apenas se o usuário gostar de terror.",
+    "type": "String",
     "required": false
   }
 }
