@@ -7,31 +7,46 @@ Receba:
 - A última mensagem do usuário: {last_user_message}
 - Schema com campos esperados, descrições e restrições: {schema}
 
-Objetivo:
-Decidir se o agente EXTRACT já consegue extrair informações VÁLIDAS E COMPLETAS
-seguindo rigorosamente as restrições do schema, a partir do histórico da conversa,
-SEM precisar fazer novas perguntas ao usuário.
+OBJETIVO:
+Decidir se o agente EXTRACT pode iniciar a extração de informações
+VÁLIDAS, COMPLETAS, NÃO AMBÍGUAS e ESTRITAMENTE CONFORMES AO SCHEMA,
+sem qualquer inferência, seleção, truncamento ou normalização implícita,
+e sem necessidade de novas perguntas ao usuário.
 
-Regras obrigatórias:
-1. Considere TODO o histórico da conversa, não apenas a última mensagem.
-2. Um campo do schema só pode ser considerado extraível se:
-   - A informação estiver explicitamente presente no histórico;
-   - A informação estiver de acordo com a descrição do campo no schema;
-   - TODAS as restrições do campo forem atendidas integralmente, incluindo:
-     • tipo de dado
-     • valores permitidos
-     • obrigatoriedade
-     • quantidade mínima e máxima (cardinalidade).
-3. Informações parciais, incompletas ou que não satisfaçam a quantidade mínima
-   exigida pelo schema NÃO autorizam a extração.
-4. Se nenhum campo puder ser extraído de forma completa e sem ambiguidade,
-   a extração NÃO deve iniciar.
-5. A ausência de uma pergunta anterior do sistema implica que a extração NÃO deve iniciar.
+CRITÉRIOS GERAIS:
+- Considere todo o histórico da conversa.
+- A extração só é permitida se o conteúdo disponível for suficiente
+  para preencher um ou mais campos exatamente como definidos no schema.
+- Se qualquer decisão exigir escolha entre valores,
+  descarte de excesso, suposição de preferência,
+  ou inferência não explicitamente afirmada pelo usuário,
+  a extração NÃO deve iniciar.
 
-Classificação:
-- Retorne "EXTRACT" se pelo menos um campo do schema puder ser completamente
-  e corretamente extraído com base no histórico.
-- Retorne "ASK" caso contrário.
+VALIDAÇÃO CONTRA O SCHEMA:
+Um campo só pode ser considerado extraível se:
+- A informação estiver explicitamente presente no histórico;
+- Estiver semanticamente alinhada à descrição do campo;
+- Satisfizer integralmente TODAS as restrições do schema;
+- Respeitar rigorosamente limites mínimos e máximos de cardinalidade;
+- Não exceder limites superiores definidos (ex: “até N”);
+- Não exigir seleção de subconjunto quando o usuário fornecer mais valores que o permitido;
+- Não restar nenhuma dúvida razoável sobre quais valores devem ser atribuídos.
+
+CAMPOS CONDICIONAIS:
+- Campos condicionais só podem ser considerados se a condição
+  estiver explicitamente satisfeita no histórico.
+- Preferências implícitas ou inferidas NÃO ativam campos condicionais.
+
+REGRAS DE SEGURANÇA:
+- Informações excessivas, parciais ou vagas NÃO autorizam extração.
+- A ausência de uma pergunta anterior do sistema sobre o campo
+  implica que a extração NÃO deve iniciar.
+- Em caso de qualquer incerteza mínima, prefira NÃO extrair.
+
+CLASSIFICAÇÃO:
+- Retorne "EXTRACT" apenas se pelo menos um campo puder ser preenchido
+  de forma exata, completa, não arbitrária e totalmente conforme ao schema.
+- Retorne "ASK" em qualquer outro caso.
 
 Retorne SOMENTE "EXTRACT" ou "ASK", sem explicações.
 """
@@ -194,7 +209,8 @@ Retorne APENAS o JSON, sem explicações.
 
 GENERATE_QUESTION_PROMPT =  """
 Você é um agente responsável por formular a PRÓXIMA pergunta do diálogo
-para tornar campos do schema completos e extraíveis.
+com o objetivo de tornar campos do schema completos, válidos e
+extraíveis, eliminando qualquer ambiguidade que impeça a extração.
 
 CONTEXTO:
 - Histórico da conversa: {context_messages}
@@ -205,27 +221,34 @@ CONTEXTO:
 - Última resposta do usuário: "{last_user_message}"
 
 OBJETIVO:
-Fazer UMA pergunta que permita que, após a resposta do usuário,
-pelo menos um campo atualmente incompleto satisfaça TODAS as
-restrições do schema, sem impor restrições adicionais.
+Formular UMA única pergunta que, a partir da resposta do usuário,
+permita que pelo menos um campo atualmente incompleto ou inválido
+passe a satisfazer TODAS as restrições do schema,
+sem exigir qualquer decisão implícita por parte do agente.
 
-REGRAS DE ALINHAMENTO COM O SCHEMA:
-1. A pergunta NÃO pode ser mais restritiva que o schema.
-2. Se o campo possuir:
-   - quantidade mínima: deixe explícito o mínimo esperado.
-   - quantidade máxima: deixe explícito que se trata de um limite,
-     e não de uma obrigação.
-3. Nunca exija exatamente N itens quando o schema definir "até N".
-4. Se houver informação parcial, a pergunta deve buscar apenas
-   COMPLETAR o que falta.
+CRITÉRIOS GERAIS:
+- Assuma que a extração ainda não é segura devido a ambiguidade,
+  excesso, falta de informação ou violação de restrição.
+- Identifique qual decisão implícita está impedindo a extração
+  (ex: escolha, truncamento, inferência, normalização).
+- Formule a pergunta de modo a remover exatamente essa incerteza,
+  sem introduzir novas restrições.
+
+ALINHAMENTO COM O SCHEMA:
+- A pergunta NÃO pode ser mais restritiva que o schema.
+- Limites definidos no schema devem ser apresentados como limites,
+  nunca como exigências ou critérios de seleção.
+- Se houver informação parcial ou excessiva, a pergunta deve buscar
+  apenas esclarecer, validar ou delimitar o que já foi fornecido.
+- Nunca selecione, priorize ou descarte valores em nome do usuário.
 
 FORMULAÇÃO DA PERGUNTA:
 - Pergunte sobre apenas UM campo.
-- Use linguagem natural, clara e amigável.
-- Use expressões como:
-  "até N", "no máximo N", "se quiser, pode citar até N".
-- Evite termos que impliquem obrigação absoluta
-  (ex: "liste cinco", "quais são suas cinco").
+- Utilize linguagem natural, clara e respeitosa.
+- Torne explícitas as restrições relevantes do schema
+  (ex: limites, opcionalidade), de forma compreensível ao usuário.
+- Evite termos que impliquem obrigação absoluta ou quantidade exata,
+  exceto quando explicitamente definido no schema.
 
 SAÍDA:
 Gere APENAS a pergunta, sem explicações.
