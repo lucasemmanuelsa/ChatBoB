@@ -22,7 +22,7 @@
   "plataformas_streaming": {
     "description": "Plataformas de streaming que o usuário mais utiliza (ex: Netflix, Prime Video, Max).",
     "type": "List",
-    "required": true
+    "required": false
   },
   "subgenero_terror_preferido": {
     "description": "Subgênero de terror preferido do usuário (ex: psicológico, sobrenatural, slasher). Apenas se o usuário gostar de terror.",
