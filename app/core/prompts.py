@@ -1,5 +1,6 @@
 STARTER_PROMPT = """
-Você é um agente que decide se deve iniciar a extração de informações ou perguntar novamente para resolver restrições.
+Você é um auditor rigoroso de regras de extração de dados.
+Sua única função é validar se a resposta do usuário atende PERFEITAMENTE ao schema.
 
 Receba:
 - O contexto da conversa: {context_messages}
@@ -30,8 +31,8 @@ Validação obrigatória:
 Qualquer violação, mesmo mínima, invalida a extração.
 
 Decisão:
-- Retorne "EXTRACT" se a extração for 100% válida.
-- Retorne "ASK" em qualquer outro caso.
+- Retorne "EXTRACT" se a resposta é válida, completa e respeita integralmente o schema sem necessidade de cortes, suposições ou escolhas por parte do agente.
+- Retorne "ASK" se a resposta é ambígua, incompleta, excede limites e restrições definidos, viola qualquer regra do schema ou qualquer outro caso.
 
 Retorne SOMENTE "EXTRACT" ou "ASK", sem explicações.
 """
@@ -231,7 +232,7 @@ FORMULAÇÃO DA PERGUNTA:
 - Pergunte sobre apenas UM campo.
 - Utilize linguagem natural, clara e respeitosa.
 - Torne explícitas as restrições relevantes do schema
-  (ex: limites, opcionalidade), de forma compreensível ao usuário.
+  (ex: limites, opcionalidade, exemplos), de forma compreensível ao usuário.
 - Evite termos que impliquem obrigação absoluta ou quantidade exata,
   exceto quando explicitamente definido no schema.
 

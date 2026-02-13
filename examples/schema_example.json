@@ -24,7 +24,7 @@
   },
 
   "horario_preferido_pedido": {
-    "description": "Período do dia em que o usuário costuma pedir comida. Os resultados possíveis são apenas manhã, tarde, ou noite. Se a resposta do usuário contiver essa informação implicitamente, o resultado pode ser inferido sem fazer perguntas adicionais ao usuário. Por exemplo, almoço pode ser inferido para tarde, jantar pode ser inferido para noite. Coletar essa informação apenas se o usuário pedir delivery com frequência igual ou superior a três vezes por semana.",
+    "description": "Período do dia em que o usuário costuma pedir comida. Os resultados possíveis são apenas manhã, tarde, ou noite. Se a resposta do usuário contiver essa informação implicitamente, o resultado pode ser inferido sem fazer perguntas adicionais ao usuário. Por exemplo, almoço pode ser inferido para tarde, jantar pode ser inferido para noite. Coletar essa informação apenas se o usuário pedir delivery com frequência igual ou superior a duas vezes por semana.",
     "type": "String",
     "required": false
   },
