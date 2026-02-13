@@ -15,6 +15,19 @@ from app.core.extractor import ExtractorAgent
 from app.utils.logger import save_session_data
 
 st.set_page_config(page_title="ChatBoB", page_icon="🤖")
+st.info("""
+### 🧪 Instruções do Experimento
+Olá! Este chat faz parte da minha pesquisa de TCC. O ChatBoB fará algumas perguntas para coletar informações. 
+**Importante:** suas respostas não precisam representar seus gostos reais, mas devem ser respostas realistas para que o estudo funcione.
+
+**Para testarmos a inteligência do agente, preciso que em pelo menos duas perguntas você tente desafiar as regras:**
+- **Se ele pedir "dois ou mais" itens:** Tente passar apenas um.
+- **Se ele pedir "até 3" itens:** Tente falar 4 ou mais.
+- **Respostas fora do padrão:** Tente dar respostas que não respondam diretamente ao que foi pedido ou diga que não quer responder aquele campo específico.
+- **Dúvidas:** Se você não entender o que ele quer, pode perguntar diretamente ao ChatBoB.
+
+Nas demais perguntas, responda naturalmente. O objetivo é observar como o ChatBoB lida com essas situações!
+""")
 
 # Carrega schema e agente
 schema_path = os.path.join(repo_root, "examples", "schema_example.json")
