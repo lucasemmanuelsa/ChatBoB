@@ -83,7 +83,7 @@ def run_graph_with_input(user_message: str):
 
 st.title("🤖 ChatBoB")
 st.info("""
-### 🧪 Instruções do Experimento
+### 🧪 Instruções do Experimento (~5 minutos)
 Olá! Este chat faz parte da minha pesquisa de TCC. O ChatBoB fará algumas perguntas para coletar informações. 
 **Importante:** suas respostas não precisam representar seus gostos reais, mas devem ser respostas realistas para que o estudo funcione.
 
