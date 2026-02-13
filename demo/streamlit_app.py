@@ -45,7 +45,7 @@ if "state" not in st.session_state:
     
     initial_msg = {
         "role": "assistant",
-        "content": "Olá! Sou o **ChatBoB**. Para me ajudar a ser melhor e aprimorar minhas habilidades, preciso que você responda a algumas perguntas. Para começarmos: **qual é o seu nome?**"
+        "content": "Olá! Sou o **ChatBoB**, como posso te chamar?**"
     }
     
     # 1. Adiciona ao histórico visual do chat
