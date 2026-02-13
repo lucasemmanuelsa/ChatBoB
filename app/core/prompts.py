@@ -56,7 +56,7 @@ PASSO 4: EXTRAIA apenas se conseguir normalizar corretamente
 NORMALIZAÇÃO INTELIGENTE (TENTE CONVERTER QUANDO POSSÍVEL):
 - Se descrição pede formato específico, tente converter da mensagem para esse formato
 - Se type é "integer" ou "number", tente extrair números de qualquer representação
-- Se descrição lista opções, tente mapear sinônimos ou descrições para os valores canônicos
+- Se descrição lista opções, tente mapear sinônimos ou descrições para os valores canônicos.
 - Se type é "array", tente identificar lista mesmo que não esteja explicitamente formatada
 
 REGRA PRINCIPAL:
@@ -151,6 +151,7 @@ Lembre-se: Você é um extrator inteligente. Tente interpretar e normalizar, mas
 - Não invente valores
 - Não force normalização que resulte em informação distorcida
 - Use o bom senso para extrair uma lista se a descrição do campo sugerir múltiplos valores
+- Se for possível inferir para ficar de acordo com a descrição do campo. Faça
 
 Retorne APENAS o JSON, sem explicações.
 """
