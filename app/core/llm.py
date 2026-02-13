@@ -9,7 +9,7 @@ def get_llm():
     return ChatOpenAI(
         model="gpt-4",
         openai_api_key=API_KEY,
-        temperature=0.2,
+        temperature=0.1,
         max_retries=5
     )
 
