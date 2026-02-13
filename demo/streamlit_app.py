@@ -98,7 +98,7 @@ Exemplos de como você pode testar os limites dele:
 
 Nas demais perguntas, responda naturalmente. O objetivo é observar como o ChatBoB lida com essas situações.
 
-Desde já, muito obrigado pela sua colaboração com este estudo!
+**Muito obrigado!**
 """)
 
 state = st.session_state.state
