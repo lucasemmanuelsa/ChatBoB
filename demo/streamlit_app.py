@@ -20,7 +20,7 @@ st.info("""
 Olá! Este chat faz parte da minha pesquisa de TCC. O ChatBoB fará algumas perguntas para coletar informações. 
 **Importante:** suas respostas não precisam representar seus gostos reais, mas devem ser respostas realistas para que o estudo funcione.
 
-**Para testarmos a inteligência do agente, preciso que em pelo menos duas perguntas você tente desafiar as regras do diálogo**
+Para testarmos a inteligência do agente, preciso que em **pelo menos duas perguntas** você tente desafiar as regras do diálogo
         
 Exemplos de como você pode testar os limites dele:
 
