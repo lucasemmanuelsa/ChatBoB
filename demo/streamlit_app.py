@@ -93,7 +93,7 @@ Exemplos de como você pode testar os limites dele:
 
 - **Se ele pedir "dois ou mais" itens:** Tente passar apenas um.
 - **Se ele pedir "até 3" itens:** Tente falar 4 ou mais.
-- **Respostas fora do padrão:** Tente dar respostas que não respondam diretamente ao que foi pedido ou diga que não quer responder aquele campo específico.
+- **Respostas fora do padrão:** Tente dar respostas que não respondam diretamente ao que foi pedido ou diga que não quer responder.
 - **Dúvidas:** Se você não entender o que ele quer, pode perguntar diretamente ao ChatBoB.
 
 Às demais perguntas, responda naturalmente. O objetivo é observar como o ChatBoB lida com essas situações.
