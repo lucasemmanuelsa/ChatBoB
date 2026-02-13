@@ -96,7 +96,7 @@ Exemplos de como você pode testar os limites dele:
 - **Respostas fora do padrão:** Tente dar respostas que não respondam diretamente ao que foi pedido ou diga que não quer responder aquele campo específico.
 - **Dúvidas:** Se você não entender o que ele quer, pode perguntar diretamente ao ChatBoB.
 
-Nas demais perguntas, responda naturalmente. O objetivo é observar como o ChatBoB lida com essas situações.
+Às demais perguntas, responda naturalmente. O objetivo é observar como o ChatBoB lida com essas situações.
 
 **Muito obrigado!**
 """)
