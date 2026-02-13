@@ -41,10 +41,18 @@ DEFAULT_STATE: Dict[str, Any] = {
 # Inicializa state + mensagem inicial automática
 if "state" not in st.session_state:
     st.session_state.state = DEFAULT_STATE.copy()
-    st.session_state.state["messages"].append({
+    
+    initial_msg = {
         "role": "assistant",
-        "content": "Olá! Sou o **ChatBoB**, seu agente extrator inteligente. Para começarmos: **qual é o seu nome?**"
-    })
+        "content": "Olá! Sou o **ChatBoB**, seu agente extrator inteligente. Para me ajudar a ser melhor e aprimorar minhas habilidades, preciso que você responda a algumas perguntas. Para começarmos: **qual é o seu nome?**"
+    }
+    
+    # 1. Adiciona ao histórico visual do chat
+    st.session_state.state["messages"].append(initial_msg)
+    
+    # 2. Adiciona ao contexto lógico do BOT (para ele saber que já se apresentou)
+    st.session_state.state["context_messages"].append(initial_msg)
+    
 
 
 def run_graph_with_input(user_message: str):

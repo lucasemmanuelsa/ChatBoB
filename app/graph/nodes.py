@@ -1,6 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END
 import json
+from datetime import datetime
 from app.core.llm import get_llm
 from app.core.prompts import (
     IDENTIFY_MISSING_FIELDS_PROMPT,
@@ -127,10 +128,14 @@ def ask_node(state):
 def output_node(state):
     template = ChatPromptTemplate.from_template(FINAL_JSON_PROMPT)
     chain = template | llm
-    state["logs"].append("OUTPUT: gerando JSON final...")
+    
+    current_time_str = datetime.now().isoformat()
+    state["logs"].append(f"OUTPUT: gerando JSON final com timestamp {current_time_str}...")
+    
     resp = chain.invoke({
         "schema": state["schema"].fields,
         "extracted": state["extracted"],
+        "current_time": current_time_str
     }).content.strip()
 
     state["logs"].append(f"OUTPUT: JSON final gerado: {resp}")

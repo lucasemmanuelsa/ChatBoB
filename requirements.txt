@@ -4,3 +4,4 @@ streamlit
 langchain-openai
 langchain-google-genai
 openai
+boto3

@@ -52,7 +52,7 @@ PASSO 2: VERIFIQUE se NO HISTÓRICO ou na ÚLTIMA MENSAGEM contém informação 
 PASSO 3: SE contiver, TENTE NORMALIZAR para atender à DESCRIÇÃO e TYPE do campo
 PASSO 4: EXTRAIA apenas se conseguir normalizar corretamente
 
-NORMALIZAÇÃO INTELLIGENTE (TENTE CONVERTER QUANDO POSSÍVEL):
+NORMALIZAÇÃO INTELIGENTE (TENTE CONVERTER QUANDO POSSÍVEL):
 - Se descrição pede formato específico, tente converter da mensagem para esse formato
 - Se type é "integer" ou "number", tente extrair números de qualquer representação
 - Se descrição lista opções, tente mapear sinônimos ou descrições para os valores canônicos
@@ -245,6 +245,7 @@ Você é um agente que monta o JSON final universal.
 Entrada:
 - Schema (campos, descrições e obrigatoriedade): {schema}
 - Dados coletados e extraídos: {extracted}
+- Data e Hora atual: {current_time}
 
 Tarefa:
 Gerar um JSON final no formato:
@@ -277,9 +278,9 @@ Formato esperado:
 
 {{
   "metadata": {{
-    "created_at": "<ISO8601 UTC>",
-    "source": "<source>",
-    "schema_version": "<schema_version>"
+    "created_at": "{current_time}",
+    "source": "ChatBoB",
+    "schema_version": "1.0"
   }},
   "data": {{
     "<campo1>": <valor ou null>,
