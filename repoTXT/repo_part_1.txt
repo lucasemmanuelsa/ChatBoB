@@ -1,0 +1,5036 @@
+
+
+==================== FILE ====================
+PATH: app\__init__.py
+
+
+==================== FILE ====================
+
+
+
+==================== FILE ====================
+PATH: app\core\__init__.py
+
+
+==================== FILE ====================
+
+
+
+==================== FILE ====================
+PATH: app\core\extractor.py
+
+
+==================== FILE ====================
+from app.graph.builder import build_graph
+from app.core.schema import Schema
+
+class ExtractorAgent:
+    def __init__(self, schema: Schema):
+        self.schema = schema
+        self.graph = build_graph()
+
+    def feed_message(self, message: str, state: dict):
+        state["last_user_message"] = message
+
+        state["context_messages"].append({
+            "role": "user",
+            "content": state["last_user_message"]
+        })
+        state["schema"] = self.schema
+        return self.graph.invoke(state)
+
+
+==================== FILE ====================
+PATH: app\core\llm.py
+
+
+==================== FILE ====================
+import os
+import streamlit as st
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+API_KEY = st.secrets["OPENAI_API_KEY"]
+
+def get_llm():
+    return ChatOpenAI(
+        model="gpt-4",
+        openai_api_key=API_KEY,
+        temperature=0.2,
+        max_retries=5
+    )
+
+'''
+def get_llm():
+    return ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+        temperature=0.2
+    )
+'''
+
+
+==================== FILE ====================
+PATH: app\core\prompts.py
+
+
+==================== FILE ====================
+STARTER_PROMPT = """
+Você é um auditor rigoroso de regras de extração de dados.
+Sua única função é validar se a resposta do usuário atende PERFEITAMENTE ao schema.
+
+Receba:
+- O contexto da conversa: {context_messages}
+- A última pergunta feita pelo sistema: {last_asked_question}
+- A última mensagem do usuário: {last_user_message}
+- Schema com campos esperados, descrições e restrições: {schema}
+
+Tarefa:
+Utilize a ultima pergunta do sistema para identificar qual campo do schema está sendo solicitado.
+Analise o contexto da conversa e a última resposta do usuário para verificar se há informação suficiente.
+Se a informação estiver presente, verifique se atende às restrições da descrição desse campo. Se algum limite ou restrição for violado minimamente, considere que a extração não é segura.
+Com base no histórico da conversa, na última pergunta do sistema,
+na última resposta do usuário e no schema fornecido, decida se a
+extração pode ser realizada.
+
+Regra principal:
+A extração só é permitida se pelo menos um campo do schema puder ser
+preenchido exatamente como definido na DESCRIÇÃO DESSE CAMPO, sem qualquer violação de
+restrições, limites ou formatos.
+
+Validação obrigatória:
+- A informação deve estar explicitamente presente.
+- Deve atender integralmente à descrição do campo.
+- Deve respeitar exatamente todas as restrições do schema.
+- Não pode haver excesso, falta ou ambiguidade na informação relacionada a esse campo.
+- Não pode exigir interpretação, ajuste ou escolha arbitrária.
+
+Qualquer violação, mesmo mínima, invalida a extração.
+
+Decisão:
+- Retorne "EXTRACT" se a resposta é válida, completa e respeita integralmente o schema sem necessidade de cortes, suposições ou escolhas por parte do agente.
+- Retorne "ASK" se a resposta é ambígua, incompleta, excede limites e restrições definidos, viola qualquer regra do schema ou qualquer outro caso.
+
+Retorne SOMENTE "EXTRACT" ou "ASK", sem explicações.
+"""
+EXTRACT_FROM_MESSAGE_PROMPT = """
+Você é um agente extrator de informações. VERIFIQUE CONFORMIDADE, TENTE NORMALIZAR E EXTRAIA se possível.
+
+SCHEMA (campos e suas descrições): {schema}
+
+CONTEXTO CRÍTICO:
+- HISTÓRICO DE MENSAGENS: {context_messages}
+- ÚLTIMA PERGUNTA DO SISTEMA: "{last_asked_question}"
+- ÚLTIMA MENSAGEM DO USUÁRIO: "{last_user_message}"
+
+PROCESSO DECISÓRIO COM NORMALIZAÇÃO:
+
+PASSO 1: IDENTIFIQUE qual campo do schema está sendo perguntado na ÚLTIMA PERGUNTA
+PASSO 2: VERIFIQUE se NO HISTÓRICO ou na ÚLTIMA MENSAGEM contém informação relacionada a ESSE CAMPO
+PASSO 3: SE contiver, TENTE NORMALIZAR para atender à DESCRIÇÃO e TYPE do campo
+PASSO 4: EXTRAIA apenas se conseguir normalizar corretamente
+
+NORMALIZAÇÃO INTELIGENTE (TENTE CONVERTER QUANDO POSSÍVEL):
+- Se descrição pede formato específico, tente converter da mensagem para esse formato
+- Se type é "integer" ou "number", tente extrair números de qualquer representação
+- Se descrição lista opções, tente mapear sinônimos ou descrições para os valores canônicos.
+- Se type é "array", tente identificar lista mesmo que não esteja explicitamente formatada
+
+REGRA PRINCIPAL:
+NÃO EXTRAIA se:
+1. Não for possível IDENTIFICAR informação relacionada ao campo pela ultima mensagem ou pelo histórico
+2. A informação NÃO puder ser normalizada para atender à descrição do campo
+3. O usuário der informação claramente para OUTRO campo não perguntado
+
+FORMATO DE RESPOSTA:
+APENAS UM DOS DOIS:
+1. {{}} (objeto vazio) - se NÃO extrair
+2. {{"nome_do_campo": valor_normalizado}} - se extrair (APENAS 1 campo por vez)
+
+EXEMPLOS CLAROS COM NORMALIZAÇÃO:
+
+Exemplo 1 (NORMALIZAÇÃO DE DATA - extrai):
+Schema: {{
+    "birth_date": {{
+        "description": "Data de nascimento no formato DD/MM/AAAA",
+        "type": "string"
+    }}
+}}
+Última pergunta: "Qual sua data de nascimento (DD/MM/AAAA)?"
+Última mensagem: "Nasci em 15 de março de 1990"
+→ {{"birth_date": "15/03/1990"}}  # NORMALIZOU: texto para formato DD/MM/AAAA
+
+Exemplo 2 (NORMALIZAÇÃO DE NÚMERO - extrai):
+Schema: {{
+    "age": {{
+        "description": "Idade em anos completos, número inteiro",
+        "type": "integer"
+    }}
+}}
+Última pergunta: "Quantos anos você tem?"
+Última mensagem: "Tenho trinta e cinco anos"
+→ {{"age": 35}}  # NORMALIZOU: por extenso para inteiro
+
+Exemplo 3 (NORMALIZAÇÃO DE OPÇÃO - extrai):
+Schema: {{
+    "subscription_plan": {{
+        "description": "Plano de assinatura: basic, premium ou enterprise",
+        "type": "string"
+    }}
+}}
+Última pergunta: "Qual plano você escolheu?"
+Última mensagem: "Quero o plano mais avançado"
+→ {{"subscription_plan": "premium"}}  # NORMALIZOU: descrição para valor canônico
+
+Exemplo 4 (NÃO CONSEGUE NORMALIZAR - não extrai):
+Schema: {{
+    "zip_code": {{
+        "description": "CEP no formato 00000-000",
+        "type": "string"
+    }}
+}}
+Última pergunta: "Qual seu CEP?"
+Última mensagem: "Moro no centro da cidade"
+→ {{}}  # NÃO há informação para normalizar
+
+Exemplo 5 (NORMALIZAÇÃO DE LISTA - extrai):
+Schema: {{
+    "skills": {{
+        "description": "Lista de habilidades técnicas",
+        "type": "array"
+    }}
+}}
+Última pergunta: "Quais suas habilidades técnicas?"
+Última mensagem: "Sei Python, um pouco de Java e também SQL"
+→ {{"skills": ["Python", "Java", "SQL"]}}  # NORMALIZOU: enumeração para array
+
+
+ANÁLISE PARA ESTA REQUISIÇÃO:
+
+1. Última pergunta: "{last_asked_question}"
+   Campo sendo perguntado: [IDENTIFIQUE DO SCHEMA]
+
+2. Descrição desse campo: [DO SCHEMA]
+   Type: [DO SCHEMA]
+
+3. Última mensagem: "{last_user_message}"
+   - Contém informação relacionada a este campo? [SIM/NÃO]
+   - Se SIM, é possível normalizar para atender descrição/type? [SIM/NÃO]
+
+DECISÃO FINAL:
+[EXTRAIR COM VALOR NORMALIZADO / NÃO EXTRAIR]
+
+SE EXTRAIR → {{"nome_do_campo": valor_normalizado}}
+SE NÃO EXTRAIR → {{}}
+
+Lembre-se: Você é um extrator inteligente. Tente interpretar e normalizar, mas seja conservador:
+- Não extraia se houver dúvida significativa
+- Não invente valores
+- Não force normalização que resulte em informação distorcida
+- Use o bom senso para extrair uma lista se a descrição do campo sugerir múltiplos valores
+- Se for possível inferir para ficar de acordo com a descrição do campo. Faça
+
+Retorne APENAS o JSON, sem explicações.
+"""
+
+IDENTIFY_MISSING_FIELDS_PROMPT = """
+Você decide quais campos ainda devem ser perguntados ao usuário.
+
+Entrada:
+- Schema (inclui required): {schema}
+- Dados extraídos: {extracted}
+- Histórico da conversa: {context_messages}
+
+Regras:
+
+1. Campo obrigatório (required: true):
+   - Está em "missing" se NÃO existir em "extracted".
+
+2. Campo opcional (required: false):
+   - Está em "missing" SOMENTE se:
+     a) NÃO existir em "extracted", E
+     b) ainda NÃO tiver sido perguntado, E
+     c) o usuário NÃO tiver recusado responder.
+
+3. Campo opcional que já possui QUALQUER valor extraído
+   NUNCA deve estar em "missing".
+
+4. Campo opcional recusado explicitamente
+   NUNCA deve estar em "missing".
+
+IMPORTANTE:
+Você deve consultar o histórico da conversa para ver se o campo opcional já foi perguntado.
+Se o campo opcional ja foi perguntado, não insista, não o adicione no missing.
+
+Formato de saída:
+{{"missing": ["campo1", "campo2", ...]}}
+
+Se nenhum campo satisfizer as condições acima:
+{{"missing": []}}
+
+Retorne APENAS o JSON, sem explicações.
+"""
+
+GENERATE_QUESTION_PROMPT =  """
+Você é um agente responsável por formular a PRÓXIMA pergunta do diálogo
+com o objetivo de tornar campos do schema completos, válidos e
+extraíveis, eliminando qualquer ambiguidade que impeça a extração.
+
+CONTEXTO:
+- Histórico da conversa: {context_messages}
+- Campos já extraídos (parciais ou completos): {extracted}
+- Campos ainda incompletos ou ausentes: {missing_fields}
+- Schema com descrições e restrições: {schema}
+- Última pergunta feita pelo sistema: "{last_asked_question}"
+- Última resposta do usuário: "{last_user_message}"
+
+OBJETIVO:
+Formular UMA única pergunta que, a partir da resposta do usuário,
+permita que pelo menos um campo atualmente incompleto ou inválido
+passe a satisfazer TODAS as restrições do schema,
+sem exigir qualquer decisão implícita por parte do agente.
+
+CRITÉRIOS GERAIS:
+- Assuma que a extração ainda não é segura devido a ambiguidade,
+  excesso, falta de informação ou violação de restrição.
+- Identifique qual decisão implícita está impedindo a extração
+  (ex: escolha, truncamento, inferência, normalização).
+- Formule a pergunta de modo a remover exatamente essa incerteza,
+  sem introduzir novas restrições.
+
+ALINHAMENTO COM O SCHEMA:
+- A pergunta NÃO pode ser mais restritiva que o schema.
+- Limites definidos no schema devem ser apresentados como limites,
+  nunca como exigências ou critérios de seleção.
+- Se houver informação parcial ou excessiva, a pergunta deve buscar
+  apenas esclarecer, validar ou delimitar o que já foi fornecido.
+- Nunca selecione, priorize ou descarte valores em nome do usuário.
+
+FORMULAÇÃO DA PERGUNTA:
+- Pergunte sobre apenas UM campo.
+- Utilize linguagem natural, clara e respeitosa.
+- Torne explícitas as restrições relevantes do schema
+  (ex: limites, opcionalidade, exemplos), de forma compreensível ao usuário.
+- Evite termos que impliquem obrigação absoluta ou quantidade exata,
+  exceto quando explicitamente definido no schema.
+
+SAÍDA:
+Gere APENAS a pergunta, sem explicações.
+"""
+
+FINAL_JSON_PROMPT = """
+Você é um agente que monta o JSON final universal.
+
+Entrada:
+- Schema (campos, descrições e obrigatoriedade): {schema}
+- Dados coletados e extraídos: {extracted}
+- Data e Hora atual: {current_time}
+
+Tarefa:
+Gerar um JSON final no formato:
+
+{{
+  "metadata": {{ ... }},
+  "data": {{ ... }},
+  "missing_fields": [ ... ]
+}}
+
+Regras obrigatórias:
+
+1. O objeto "data" DEVE conter TODOS os campos definidos no schema.
+   - Para campos extraídos, use o valor coletado.
+   - Para campos não extraídos, use null.
+
+2. O campo "missing_fields" deve conter APENAS:
+   - Campos obrigatórios (required: true) que NÃO foram extraídos.
+
+3. Campos NÃO obrigatórios (required: false) NÃO devem aparecer em
+   "missing_fields", mesmo que estejam com valor null em "data".
+
+4. Campos que o usuário recusou explicitamente responder NÃO devem
+   aparecer em "missing_fields".
+
+5. Se todos os campos obrigatórios estiverem presentes, "missing_fields"
+   deve ser uma lista vazia.
+
+Formato esperado:
+
+{{
+  "metadata": {{
+    "created_at": "{current_time}",
+    "source": "ChatBoB",
+    "schema_version": "1.0"
+  }},
+  "data": {{
+    "<campo1>": <valor ou null>,
+    "<campo2>": <valor ou null>
+  }},
+  "missing_fields": ["<campo_obrigatorio_faltante>"]
+}}
+
+Retorne APENAS o JSON final, sem explicações.
+"""
+
+
+==================== FILE ====================
+PATH: app\core\schema.py
+
+
+==================== FILE ====================
+import json
+
+class Schema:
+    def __init__(self, schema_dict: dict):
+        # Usa o JSON exatamente como foi carregado; não exige chave "fields".
+        self.fields = schema_dict
+
+    @staticmethod
+    def load_from_file(path: str):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return Schema(data)
+    
+"""
+# Criar schema diretamente
+schema1 = Schema({"fields": {"nome": "string", "idade": "number"}})
+
+# Criar schema a partir de arquivo
+schema2 = Schema.load_from_file("meu_esquema.json")
+"""
+
+
+==================== FILE ====================
+PATH: app\graph\__init__.py
+
+
+==================== FILE ====================
+
+
+
+==================== FILE ====================
+PATH: app\graph\builder.py
+
+
+==================== FILE ====================
+from langgraph.graph import StateGraph, END
+from app.graph.state import AgentState
+from app.graph.nodes import (
+    starter_node,
+    extractor_node,
+    missing_node,
+    ask_node,
+    output_node
+)
+
+
+def build_graph():
+    graph = StateGraph(AgentState)
+
+    graph.add_node("starter", starter_node)
+    graph.add_node("extractor", extractor_node)
+    graph.add_node("missing", missing_node)
+    graph.add_node("ask", ask_node)
+    graph.add_node("output", output_node)
+
+    # Entrypoint: iniciar no nó "starter" para que o fluxo seja decidido pelo starter
+    graph.set_entry_point("starter")
+
+    graph.add_conditional_edges(
+        "starter",
+        lambda state: state["next"],
+        {
+            "extractor": "extractor",
+            "ask": "ask",
+        }
+    )
+
+    graph.add_edge("extractor", "missing")
+    
+    graph.add_conditional_edges(
+        "missing",
+        lambda state: state["next"],
+        {
+            "ask": "ask",
+            "output": "output"
+        }
+    )
+
+
+    graph.add_edge("output", END)
+    return graph.compile()
+
+
+
+==================== FILE ====================
+PATH: app\graph\nodes.py
+
+
+==================== FILE ====================
+from langchain_core.prompts import ChatPromptTemplate
+from langgraph.graph import END
+import json
+from datetime import datetime
+from app.core.llm import get_llm
+from app.core.prompts import (
+    IDENTIFY_MISSING_FIELDS_PROMPT,
+    STARTER_PROMPT,
+    EXTRACT_FROM_MESSAGE_PROMPT,
+    GENERATE_QUESTION_PROMPT,
+    FINAL_JSON_PROMPT
+)
+
+llm = get_llm()
+
+def starter_node(state):
+    template = ChatPromptTemplate.from_template(STARTER_PROMPT)
+    chain = template | llm
+
+    state["logs"].append("STARTER: Iniciando classificação de intenção...")
+
+    intent = chain.invoke({
+            "context_messages": state.get("context_messages"),
+            "last_asked_question": state.get("last_asked_question"),
+            "last_user_message": state.get("last_user_message"),
+            "schema": state["schema"].fields
+    }
+    ).content.strip().upper()
+
+    state["logs"].append(f"STARTER: Intenção classificada como {intent}")
+
+
+    if 'EXTRACT' in intent:
+        return {"next": "extractor", "logs": state["logs"]}
+    return {"next": "ask", "logs": state["logs"]}
+
+def extractor_node(state):
+
+    state['logs'].append("EXTRACTOR: extraindo informações...")
+    template = ChatPromptTemplate.from_template(EXTRACT_FROM_MESSAGE_PROMPT)
+
+    chain = template | llm
+
+    resp = chain.invoke({
+        "schema": state["schema"].fields,
+        "context_messages" : state.get("context_messages"),
+        "last_user_message": state["last_user_message"],
+        "last_asked_question": state["last_asked_question"],
+        "extracted": state["extracted"]
+        }
+    ).content.strip()
+
+    try:
+        partial = json.loads(resp)
+    except Exception:
+        partial = {}
+        state['logs'].append("EXTRACTOR: falha ao parsear JSON, extraído vazio.")
+    
+    extracted = state["extracted"]
+    extracted.update(partial)
+
+    state['logs'].append(f"EXTRACTOR: extraído {partial}")
+    return {"extracted": extracted, "next": "missing", "logs": state["logs"]}
+
+def missing_node(state):
+    state["logs"].append("MISSING: verificando campos faltantes via LLM...")
+    
+    template = ChatPromptTemplate.from_template(IDENTIFY_MISSING_FIELDS_PROMPT)
+    chain = template | llm
+
+    resp = chain.invoke({ 
+        "schema": state["schema"].fields,
+        "extracted": state["extracted"],
+        "context_messages": state.get("context_messages")
+    }).content.strip()
+
+
+    try:
+        parsed = json.loads(resp)
+        missing = parsed.get("missing", [])
+    except Exception:
+        schema_fields = state["schema"].fields
+        extracted = state.get("extracted", {})
+        missing = [field for field in schema_fields if field not in extracted or not extracted[field]]
+        state["logs"].append("MISSING: falha ao parsear JSON, usando lógica fallback.")
+
+    state["logs"].append(f"MISSING: campos faltantes identificados: {missing}")
+
+    out = {"missing_fields": missing, "logs": state["logs"]}
+    out["next"] = "ask" if missing else "output"
+    return out
+
+def ask_node(state):
+
+    state["logs"].append("ASK: gerando pergunta para campo faltante...")
+    missing = state.get("missing_fields", [])
+
+    if not missing:
+        state["logs"].append("ASK: campo vazio")
+
+    template = ChatPromptTemplate.from_template(GENERATE_QUESTION_PROMPT)
+    chain = template | llm
+
+    raw = chain.invoke({
+        "context_messages": state["context_messages"],
+        "extracted": state["extracted"],
+        "missing_fields": missing,
+        "schema": state["schema"].fields,
+        "last_asked_question": state["last_asked_question"],
+        "last_user_message": state["last_user_message"]
+    }).content.strip()
+
+    state["context_messages"].append({
+        "role": "assistant",
+        "content": raw
+    })
+
+    state["logs"].append(f"ASK: pergunta gerada: {raw}")
+
+    return {
+        "question_to_ask": raw,
+        "last_asked_question": raw,
+        "context_messages": state["context_messages"],
+        "next": None,
+        "logs": state["logs"]
+        }
+
+def output_node(state):
+    template = ChatPromptTemplate.from_template(FINAL_JSON_PROMPT)
+    chain = template | llm
+    
+    current_time_str = datetime.now().isoformat()
+    state["logs"].append(f"OUTPUT: gerando JSON final com timestamp {current_time_str}...")
+    
+    resp = chain.invoke({
+        "schema": state["schema"].fields,
+        "extracted": state["extracted"],
+        "current_time": current_time_str
+    }).content.strip()
+
+    state["logs"].append(f"OUTPUT: JSON final gerado: {resp}")
+
+    try:
+        resp = json.loads(resp)
+    except Exception:
+        resp = {}
+
+    return {"final_json": resp, "status_finished": True, "logs": state["logs"], "next": END}
+
+
+
+==================== FILE ====================
+PATH: app\graph\state.py
+
+
+==================== FILE ====================
+from typing import Dict, Any, TypedDict
+from app.core.schema import Schema
+
+class AgentState(TypedDict):
+    last_user_message: str
+    last_asked_question: str
+    schema: Schema
+    extracted: Dict[str, Any]
+    missing_fields: list
+    question_to_ask: str
+    final_json: Dict[str, Any]
+    context_messages: list
+    status_finished: bool
+    next: str
+    logs: list
+
+
+==================== FILE ====================
+PATH: app\plugins\__init__.py
+
+
+==================== FILE ====================
+
+
+
+==================== FILE ====================
+PATH: app\plugins\base.py
+
+
+==================== FILE ====================
+
+
+
+==================== FILE ====================
+PATH: app\plugins\google_forms.py
+
+
+==================== FILE ====================
+
+
+
+==================== FILE ====================
+PATH: app\utils\__init__.py
+
+
+==================== FILE ====================
+
+
+
+==================== FILE ====================
+PATH: app\utils\logger.py
+
+
+==================== FILE ====================
+import os
+import json
+import boto3
+from datetime import datetime
+from typing import Dict, Any
+
+import streamlit as st
+
+def save_s3_object(s3_client, bucket: str, key: str, data: Any):
+    """Auxiliar para salvar JSON no S3"""
+    try:
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(data, indent=2, ensure_ascii=False),
+            ContentType='application/json'
+        )
+    except Exception as e:
+        print(f"Erro ao salvar no S3 ({key}): {e}")
+
+def save_session_data(state: Dict[str, Any], base_dir: str = "conversation_logs"):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    
+    # Recupera configurações via secrets.toml
+    bucket_name = st.secrets.get("S3_BUCKET_NAME")
+    aws_region = st.secrets.get("AWS_REGION", "us-east-2")
+    aws_access_key = st.secrets.get("AWS_ACCESS_KEY_ID")
+    aws_secret_key = st.secrets.get("AWS_SECRET_ACCESS_KEY")
+    
+    if bucket_name:
+        # --- MODO S3 ---
+        s3_base_path = f"session_{timestamp}"
+        
+        try:
+            # Monta kwargs para o boto3
+            boto_kwargs = {
+                'service_name': 's3',
+                'region_name': aws_region
+            }
+            
+            # Se credenciais forem fornecidas explicitamente (comum em secrets.toml), usa-as
+            if aws_access_key and aws_secret_key:
+                boto_kwargs['aws_access_key_id'] = aws_access_key
+                boto_kwargs['aws_secret_access_key'] = aws_secret_key
+            
+            # Inicializa cliente S3
+            s3 = boto3.client(**boto_kwargs)
+            
+            print(f"Salvando logs no S3 Bucket: {bucket_name}, Pasta: {s3_base_path}")
+
+            # 1. Conversa
+            save_s3_object(s3, bucket_name, f"{s3_base_path}/conversation.json", state.get("context_messages", []))
+            
+            # 2. JSON final
+            save_s3_object(s3, bucket_name, f"{s3_base_path}/finaljson.json", state.get("final_json"))
+            
+            # 3. Logs
+            save_s3_object(s3, bucket_name, f"{s3_base_path}/agent_logs.json", state.get("logs", []))
+
+            return f"s3://{bucket_name}/{s3_base_path}"
+
+        except Exception as e:
+            print(f"Falha ao salvar no S3, tentando backup local. Erro: {e}")
+            # Fallback para local
+            pass
+
+    # --- MODO LOCAL (Padrão ou Fallback) ---
+    session_dir = os.path.join(base_dir, f"session_{timestamp}")
+    os.makedirs(session_dir, exist_ok=True)
+
+    # 1. Conversa
+    with open(os.path.join(session_dir, "conversation.json"), "w", encoding="utf-8") as f:
+        json.dump(state.get("context_messages", []), f, indent=2, ensure_ascii=False)
+
+    # 2. JSON final
+    with open(os.path.join(session_dir, "finaljson.json"), "w", encoding="utf-8") as f:
+        json.dump(state.get("final_json"), f, indent=2, ensure_ascii=False)
+
+    # 3. Logs
+    with open(os.path.join(session_dir, "agent_logs.json"), "w", encoding="utf-8") as f:
+        json.dump(state.get("logs", []), f, indent=2, ensure_ascii=False)
+
+    return session_dir
+
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_141123_164\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['ação', 'suspense']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você tem algum gênero de filme ou série que prefere evitar ou não gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_evitar': ['romance']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quantas horas aproximadamente você passa por semana assistindo filmes ou séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horas_semanais_streaming': 5}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries de ação e suspense? Por exemplo, Netflix, Prime Video, HBO Max, entre outras.",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['Netflix', 'Prime Video', 'Crunchyroll']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são seus filmes favoritos? Se quiser, pode citar até cinco.",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-09-20T18:25:43.511Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"ação\", \"suspense\"],\n    \"generos_evitar\": [\"romance\"],\n    \"horas_semanais_streaming\": 5,\n    \"filmes_favoritos\": [\"forest gump\"],\n    \"plataformas_streaming\": [\"Netflix\", \"Prime Video\", \"Crunchyroll\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": [\"filmes_favoritos\"]\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_141123_164\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas!"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "eu gosto de ação e suspense"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries?"
+  },
+  {
+    "role": "user",
+    "content": "como assim?"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você tem algum gênero de filme ou série que prefere evitar ou não gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "não gosto de romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quantas horas aproximadamente você passa por semana assistindo filmes ou séries?"
+  },
+  {
+    "role": "user",
+    "content": "passo cerca de 5 horas"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries de ação e suspense? Por exemplo, Netflix, Prime Video, HBO Max, entre outras."
+  },
+  {
+    "role": "user",
+    "content": "eu assisto bastante na netflix e na prime video, mas também gosto de assistir animes pela crunch"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são seus filmes favoritos? Se quiser, pode citar até cinco."
+  },
+  {
+    "role": "user",
+    "content": "gosto muito de forest gump"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_141123_164\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-09-20T18:25:43.511Z",
+    "source": "user_survey",
+    "schema_version": "1.0.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "ação",
+      "suspense"
+    ],
+    "generos_evitar": [
+      "romance"
+    ],
+    "horas_semanais_streaming": 5,
+    "filmes_favoritos": [
+      "forest gump"
+    ],
+    "plataformas_streaming": [
+      "Netflix",
+      "Prime Video",
+      "Crunchyroll"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": [
+    "filmes_favoritos"
+  ]
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_142537_242\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você poderia me dizer outro gênero de filme ou série que você também gosta, além do romance?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'terror']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são os gêneros de filmes ou séries que você geralmente evita ou não gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_evitar': ['drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming', 'subgenero_terror_preferido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Quantas horas por semana você costuma assistir filmes ou séries em plataformas de streaming?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming', 'subgenero_terror_preferido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['Netflix', 'Prime Video', 'Crunch']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer, aproximadamente, quantas horas por dia você costuma assistir filmes ou séries? Isso nos ajudará a estimar suas horas semanais de streaming.",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horas_semanais_streaming': 35}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer mais dois filmes ou séries que você gosta, além de SWAT?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['swat', 'dexter', 'the walking dead', 'the office']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['subgenero_terror_preferido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Como você mencionou que gosta de filmes de terror, você tem algum subgênero de terror preferido, como psicológico, sobrenatural, slasher, entre outros?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'subgenero_terror_preferido': 'psicológico'}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-09-14T12:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"terror\"],\n    \"generos_evitar\": [\"drama\"],\n    \"horas_semanais_streaming\": 35,\n    \"filmes_favoritos\": [\"swat\", \"dexter\", \"the walking dead\", \"the office\"],\n    \"plataformas_streaming\": [\"Netflix\", \"Prime Video\", \"Crunch\"],\n    \"subgenero_terror_preferido\": \"psicológico\"\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_142537_242\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer outro gênero de filme ou série que você também gosta, além do romance?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de terror"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são os gêneros de filmes ou séries que você geralmente evita ou não gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "nao gosto de drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Quantas horas por semana você costuma assistir filmes ou séries em plataformas de streaming?"
+  },
+  {
+    "role": "user",
+    "content": "nao sei"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries?"
+  },
+  {
+    "role": "user",
+    "content": "eu gosto da netflix e da prime video, mas para assistir animes eu gosto da crunch"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer, aproximadamente, quantas horas por dia você costuma assistir filmes ou séries? Isso nos ajudará a estimar suas horas semanais de streaming."
+  },
+  {
+    "role": "user",
+    "content": "assisto cerca de 5 horas por dia"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de swat"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer mais dois filmes ou séries que você gosta, além de SWAT?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de dexter, the walking dead e the office"
+  },
+  {
+    "role": "assistant",
+    "content": "Como você mencionou que gosta de filmes de terror, você tem algum subgênero de terror preferido, como psicológico, sobrenatural, slasher, entre outros?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de terror piscológico"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_142537_242\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-09-14T12:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "terror"
+    ],
+    "generos_evitar": [
+      "drama"
+    ],
+    "horas_semanais_streaming": 35,
+    "filmes_favoritos": [
+      "swat",
+      "dexter",
+      "the walking dead",
+      "the office"
+    ],
+    "plataformas_streaming": [
+      "Netflix",
+      "Prime Video",
+      "Crunch"
+    ],
+    "subgenero_terror_preferido": "psicológico"
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_143822_952\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Desculpe pela confusão, Lucas. Eu estava me referindo a gêneros de filmes ou séries. Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você poderia me dizer outro gênero de filmes ou séries que você também gosta, além do romance?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'ação']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Existe algum gênero de filmes ou séries que você prefere evitar ou não gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_evitar': []}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Quantas horas por semana você costuma assistir a filmes ou séries, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horas_semanais_streaming': 28}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir suas séries e animes?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['netflix']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são até três dos seus filmes favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, além de Netflix, você utiliza alguma outra plataforma de streaming para assistir suas séries e animes? E você poderia me dizer mais um ou dois filmes que você gosta, além de Forest Gump?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['Netflix'], 'filmes_favoritos': ['Forest Gump']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer mais um ou dois filmes que você gosta, além de Forest Gump?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você tem mais algum filme favorito que gostaria de compartilhar conosco?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'dexter']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-01T00:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"ação\"],\n    \"generos_evitar\": [],\n    \"horas_semanais_streaming\": 28,\n    \"filmes_favoritos\": [\"forest gump\", \"dexter\"],\n    \"plataformas_streaming\": [\"Netflix\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_143822_952\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de rock"
+  },
+  {
+    "role": "assistant",
+    "content": "Desculpe pela confusão, Lucas. Eu estava me referindo a gêneros de filmes ou séries. Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer outro gênero de filmes ou séries que você também gosta, além do romance?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de ação"
+  },
+  {
+    "role": "assistant",
+    "content": "Existe algum gênero de filmes ou séries que você prefere evitar ou não gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "não, eu gosto de todos"
+  },
+  {
+    "role": "assistant",
+    "content": "Quantas horas por semana você costuma assistir a filmes ou séries, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "costumo assistir 2 horas por dia de series e duas horas por dia de anime"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir suas séries e animes?"
+  },
+  {
+    "role": "user",
+    "content": "netflix"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são até três dos seus filmes favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "gosto muito de forest gump"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, além de Netflix, você utiliza alguma outra plataforma de streaming para assistir suas séries e animes? E você poderia me dizer mais um ou dois filmes que você gosta, além de Forest Gump?"
+  },
+  {
+    "role": "user",
+    "content": "não, apenas netflix e gosto de apenas forest gump"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer mais um ou dois filmes que você gosta, além de Forest Gump?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de dexter"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você tem mais algum filme favorito que gostaria de compartilhar conosco?"
+  },
+  {
+    "role": "user",
+    "content": "não"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_143822_952\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-01T00:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "ação"
+    ],
+    "generos_evitar": [],
+    "horas_semanais_streaming": 28,
+    "filmes_favoritos": [
+      "forest gump",
+      "dexter"
+    ],
+    "plataformas_streaming": [
+      "Netflix"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_150443_241\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas! Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, você mencionou que gosta de drama, mas rock parece ser um gênero musical. Poderia me dizer outro gênero de filme ou série que você gosta, além do drama?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['drama', 'ação']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são os gêneros de filmes ou séries que você geralmente evita ou não gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_evitar': ['terror']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['netflix', 'prime video']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer, em média, quantas horas por semana você passa assistindo filmes ou séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horas_semanais_streaming': 14}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são, no máximo, três de seus filmes ou séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'dexter', 'swat']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-09-29T12:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"drama\", \"ação\"],\n    \"generos_evitar\": [\"terror\"],\n    \"horas_semanais_streaming\": 14,\n    \"filmes_favoritos\": [\"forest gump\", \"dexter\", \"swat\"],\n    \"plataformas_streaming\": [\"netflix\", \"prime video\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_150443_241\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas!"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas! Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de rock e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você mencionou que gosta de drama, mas rock parece ser um gênero musical. Poderia me dizer outro gênero de filme ou série que você gosta, além do drama?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de ação"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são os gêneros de filmes ou séries que você geralmente evita ou não gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "eu não gosto de terror"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "netflix e prime video"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer, em média, quantas horas por semana você passa assistindo filmes ou séries?"
+  },
+  {
+    "role": "user",
+    "content": "2 horas por dia de filme"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são, no máximo, três de seus filmes ou séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "eu gosto de forest gump, dexter, swat e the walking dead"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_150443_241\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-09-29T12:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "drama",
+      "ação"
+    ],
+    "generos_evitar": [
+      "terror"
+    ],
+    "horas_semanais_streaming": 14,
+    "filmes_favoritos": [
+      "forest gump",
+      "dexter",
+      "swat"
+    ],
+    "plataformas_streaming": [
+      "netflix",
+      "prime video"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_153100_672\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'ação']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais gêneros de filmes ou séries você geralmente evita assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_evitar': ['drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Quantas horas por semana você costuma assistir filmes ou séries, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horas_semanais_streaming': 35}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['netflix']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são até três filmes ou séries que são seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'o menino do pijama listrado', 'tropa de elite', 'o lobo de wall street']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['subgenero_terror_preferido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você gosta de filmes ou séries de terror? Se sim, qual subgênero de terror você prefere, como por exemplo, psicológico, sobrenatural ou slasher?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-04-01T00:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"ação\"],\n    \"generos_evitar\": [\"drama\"],\n    \"horas_semanais_streaming\": 35,\n    \"filmes_favoritos\": [\"forest gump\", \"o menino do pijama listrado\", \"tropa de elite\", \"o lobo de wall street\"],\n    \"plataformas_streaming\": [\"netflix\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": [\"filmes_favoritos\", \"plataformas_streaming\"]\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_153100_672\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas!"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de romance e ação"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais gêneros de filmes ou séries você geralmente evita assistir?"
+  },
+  {
+    "role": "user",
+    "content": "geralmente evito assistir drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Quantas horas por semana você costuma assistir filmes ou séries, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "5horas por dia"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "netflix"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são até três filmes ou séries que são seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "forest gump, o menino do pijama listrado, tropa de elite e o lobo de wall street"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você gosta de filmes ou séries de terror? Se sim, qual subgênero de terror você prefere, como por exemplo, psicológico, sobrenatural ou slasher?"
+  },
+  {
+    "role": "user",
+    "content": "não gosto"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_153100_672\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-04-01T00:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "ação"
+    ],
+    "generos_evitar": [
+      "drama"
+    ],
+    "horas_semanais_streaming": 35,
+    "filmes_favoritos": [
+      "forest gump",
+      "o menino do pijama listrado",
+      "tropa de elite",
+      "o lobo de wall street"
+    ],
+    "plataformas_streaming": [
+      "netflix"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": [
+    "filmes_favoritos",
+    "plataformas_streaming"
+  ]
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_154406_683\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas! Poderia me dizer quais são seus três filmes ou séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, percebi que você mencionou quatro filmes ou séries, mas nosso sistema só consegue registrar até três. Poderia confirmar quais são os seus três favoritos entre \"Dexter\", \"Forest Gump\", \"The Walking Dead\" e \"O Menino do Pijama Listrado\"?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['Dexter', 'Forest Gump', 'The Walking Dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['Netflix']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-04-01T12:00:00Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"filmes_favoritos\": [\"Dexter\", \"Forest Gump\", \"The Walking Dead\"],\n    \"plataformas_streaming\": [\"Netflix\"]\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_154406_683\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas!"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas! Poderia me dizer quais são seus três filmes ou séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead e o menino do pijama listrado"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, percebi que você mencionou quatro filmes ou séries, mas nosso sistema só consegue registrar até três. Poderia confirmar quais são os seus três favoritos entre \"Dexter\", \"Forest Gump\", \"The Walking Dead\" e \"O Menino do Pijama Listrado\"?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "Netflix"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_154406_683\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-04-01T12:00:00Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "filmes_favoritos": [
+      "Dexter",
+      "Forest Gump",
+      "The Walking Dead"
+    ],
+    "plataformas_streaming": [
+      "Netflix"
+    ]
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_155436_687\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas! Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você mencionou que gosta de filmes de romance. Poderia me dizer outro gênero de filme ou série que você também gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'ação']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Existe algum gênero de filme ou série que você prefere evitar ou não gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_evitar': ['drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Quantas horas por semana você costuma assistir filmes ou séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horas_semanais_streaming': 5}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['netflix', 'prime video']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são até três filmes ou séries que você considera seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['the walking dead', 'dexter', 'forest gump']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['subgenero_terror_preferido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Como você não mencionou gostar do gênero terror, não precisamos saber qual é o seu subgênero preferido. No entanto, percebi que você mencionou quatro filmes ou séries favoritos, mas nosso sistema só pode registrar até três. Poderia confirmar quais são os três principais entre \"The Walking Dead\", \"Dexter\", \"Forest Gump\" e \"Stranger Things\"?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['the walking dead', 'stranger things', 'forest gump']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-16T00:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"ação\"],\n    \"generos_evitar\": [\"drama\"],\n    \"horas_semanais_streaming\": 5,\n    \"filmes_favoritos\": [\"the walking dead\", \"stranger things\", \"forest gump\"],\n    \"plataformas_streaming\": [\"netflix\", \"prime video\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_155436_687\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas!"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas! Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Você mencionou que gosta de filmes de romance. Poderia me dizer outro gênero de filme ou série que você também gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de ação"
+  },
+  {
+    "role": "assistant",
+    "content": "Existe algum gênero de filme ou série que você prefere evitar ou não gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "não gosto de drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Quantas horas por semana você costuma assistir filmes ou séries?"
+  },
+  {
+    "role": "user",
+    "content": "apenas 5"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são as plataformas de streaming que você mais utiliza para assistir seus filmes e séries?"
+  },
+  {
+    "role": "user",
+    "content": "netflix e prime video"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são até três filmes ou séries que você considera seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "the walking dead, dexter, forest gump e stranger things"
+  },
+  {
+    "role": "assistant",
+    "content": "Como você não mencionou gostar do gênero terror, não precisamos saber qual é o seu subgênero preferido. No entanto, percebi que você mencionou quatro filmes ou séries favoritos, mas nosso sistema só pode registrar até três. Poderia confirmar quais são os três principais entre \"The Walking Dead\", \"Dexter\", \"Forest Gump\" e \"Stranger Things\"?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de the walking dead, stranger things e forest gump"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_155436_687\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-16T00:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "ação"
+    ],
+    "generos_evitar": [
+      "drama"
+    ],
+    "horas_semanais_streaming": 5,
+    "filmes_favoritos": [
+      "the walking dead",
+      "stranger things",
+      "forest gump"
+    ],
+    "plataformas_streaming": [
+      "netflix",
+      "prime video"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_160706_144\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['generos_evitar', 'horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são os gêneros de filmes ou séries que você geralmente evita assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_evitar': ['terror']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horas_semanais_streaming', 'filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Quantas horas por semana você costuma assistir a filmes ou séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horas_semanais_streaming': 35}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos', 'plataformas_streaming']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir filmes e séries?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'plataformas_streaming': ['netflix', 'prime video']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são até três filmes ou séries que você considera seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['dexter', 'the walking dead', 'forest gump']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-05-20T18:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"generos_evitar\": [\"terror\"],\n    \"horas_semanais_streaming\": 35,\n    \"filmes_favoritos\": [\"dexter\", \"the walking dead\", \"forest gump\"],\n    \"plataformas_streaming\": [\"netflix\", \"prime video\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_160706_144\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são os gêneros de filmes ou séries que você geralmente evita assistir?"
+  },
+  {
+    "role": "user",
+    "content": "não gosto de terror"
+  },
+  {
+    "role": "assistant",
+    "content": "Quantas horas por semana você costuma assistir a filmes ou séries?"
+  },
+  {
+    "role": "user",
+    "content": "5 horas por dia"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são as plataformas de streaming que você mais utiliza para assistir filmes e séries?"
+  },
+  {
+    "role": "user",
+    "content": "netflix e prime video"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são até três filmes ou séries que você considera seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, the walking dead, forest gump e stranger things"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_160706_144\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-05-20T18:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "generos_evitar": [
+      "terror"
+    ],
+    "horas_semanais_streaming": 35,
+    "filmes_favoritos": [
+      "dexter",
+      "the walking dead",
+      "forest gump"
+    ],
+    "plataformas_streaming": [
+      "netflix",
+      "prime video"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_161227_428\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas, tudo bem? Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são seus três filmes ou séries favoritos, preferencialmente nos gêneros de romance e drama que você mencionou?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'dexter', 'the walking dead', 'stranger things']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-05-20T10:30:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"forest gump\", \"dexter\", \"the walking dead\", \"stranger things\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_161227_428\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas, tudo bem? Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são seus três filmes ou séries favoritos, preferencialmente nos gêneros de romance e drama que você mencionou?"
+  },
+  {
+    "role": "user",
+    "content": "forest gump,dexter, the walking dead e stranger things"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_161227_428\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-05-20T10:30:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "forest gump",
+      "dexter",
+      "the walking dead",
+      "stranger things"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_162425_362\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você mencionou que gosta de filmes de romance. Poderia me dizer mais um gênero de filme ou série que você também gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['stranger things', 'the walking dead', 'dexter']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-04-26T18:25:43Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"stranger things\", \"the walking dead\", \"dexter\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_162425_362\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Você mencionou que gosta de filmes de romance. Poderia me dizer mais um gênero de filme ou série que você também gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "stranger things, the walking dead, dexter e forest gump"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_162425_362\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-04-26T18:25:43Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "stranger things",
+      "the walking dead",
+      "dexter"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_163230_509\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas? Eles podem ser de qualquer gênero.",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'the walking dead', 'dexter']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-05-01T12:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"forest gump\", \"the walking dead\", \"dexter\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_163230_509\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas? Eles podem ser de qualquer gênero."
+  },
+  {
+    "role": "user",
+    "content": "forest gump, the walking dead, dexter e top gun"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_163230_509\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-05-01T12:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "forest gump",
+      "the walking dead",
+      "dexter"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_163926_787\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas, tudo bem? Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você mencionou que gosta de filmes de romance. Poderia me dizer outro gênero de filmes ou séries que você também gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'ação']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Poderia me dizer quais são seus três filmes ou séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'the walking dead', 'stranger things']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-09-15T10:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"ação\"],\n    \"filmes_favoritos\": [\"forest gump\", \"the walking dead\", \"stranger things\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_163926_787\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "oi meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas, tudo bem? Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Você mencionou que gosta de filmes de romance. Poderia me dizer outro gênero de filmes ou séries que você também gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "ação"
+  },
+  {
+    "role": "assistant",
+    "content": "Poderia me dizer quais são seus três filmes ou séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "forest  gump, the walking dead, stranger things e dexter"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_163926_787\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-09-15T10:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "ação"
+    ],
+    "filmes_favoritos": [
+      "forest gump",
+      "the walking dead",
+      "stranger things"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164541_241\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas, tudo bem? Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são até três filmes ou séries favoritos seus, preferencialmente dos gêneros romance e drama que você mencionou gostar?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, percebi que você mencionou mais do que três filmes e séries. Poderia, por favor, selecionar apenas três deles como seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['dexter', 'forest gump', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-09-15T00:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"dexter\", \"forest gump\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164541_241\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas, tudo bem? Poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são até três filmes ou séries favoritos seus, preferencialmente dos gêneros romance e drama que você mencionou gostar?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead, stranger thins e top gun"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, percebi que você mencionou mais do que três filmes e séries. Poderia, por favor, selecionar apenas três deles como seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164541_241\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-09-15T00:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "dexter",
+      "forest gump",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164703_301\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas! Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são até três filmes ou séries favoritos seus, preferencialmente nos gêneros de romance e drama que você mencionou gostar?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['dexter', 'forest gump', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-15T12:00:00Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"dexter\", \"forest gump\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164703_301\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, sou lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas! Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são até três filmes ou séries favoritos seus, preferencialmente nos gêneros de romance e drama que você mencionou gostar?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead, stranger things"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164703_301\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-15T12:00:00Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "dexter",
+      "forest gump",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164910_693\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['dexter', 'forest gump', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-24T14:15:22Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"dexter\", \"forest gump\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164910_693\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "sou lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead, stranger thins"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_164910_693\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-24T14:15:22Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "dexter",
+      "forest gump",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_165541_740\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Desculpe, Lucas, acho que houve um mal-entendido. Quando perguntei sobre gêneros, estava me referindo a categorias de filmes ou séries, como ação, comédia, drama, terror, etc. Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são até três filmes ou séries favoritos seus, preferencialmente dentro dos gêneros de romance e drama que você mencionou gostar?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são até três filmes específicos que você gosta, que se enquadram na categoria de \"filmes de mulherzinha\", que você mencionou?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Claro, Lucas. Água mineral é uma substância líquida que vem de fontes naturais subterrâneas e contém vários minerais, como sais e compostos de enxofre, que são benéficos para a saúde. Agora, voltando à nossa conversa anterior, você poderia me dizer quais são até três filmes específicos que você gosta, que se enquadram na categoria de \"filmes de mulherzinha\", que você mencionou?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você mencionou cinco títulos que gosta: \"Dexter\", \"Forest Gump\", \"The Walking Dead\", \"Stranger Things\" e \"Top Gun\". Para o nosso registro, poderia escolher até três desses como seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, entendo que você gosta de todos os títulos mencionados, mas para o nosso registro, poderia escolher três deles que você considera seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['Dexter', 'Forest Gump', 'The Walking Dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-05-01T18:30:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"Dexter\", \"Forest Gump\", \"The Walking Dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_165541_740\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "rock"
+  },
+  {
+    "role": "assistant",
+    "content": "Desculpe, Lucas, acho que houve um mal-entendido. Quando perguntei sobre gêneros, estava me referindo a categorias de filmes ou séries, como ação, comédia, drama, terror, etc. Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são até três filmes ou séries favoritos seus, preferencialmente dentro dos gêneros de romance e drama que você mencionou gostar?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de filmes de mulherzinha"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são até três filmes específicos que você gosta, que se enquadram na categoria de \"filmes de mulherzinha\", que você mencionou?"
+  },
+  {
+    "role": "user",
+    "content": "só se voce me explicar melhor o que é água mineral"
+  },
+  {
+    "role": "assistant",
+    "content": "Claro, Lucas. Água mineral é uma substância líquida que vem de fontes naturais subterrâneas e contém vários minerais, como sais e compostos de enxofre, que são benéficos para a saúde. Agora, voltando à nossa conversa anterior, você poderia me dizer quais são até três filmes específicos que você gosta, que se enquadram na categoria de \"filmes de mulherzinha\", que você mencionou?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead, stranger thins e top gun"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você mencionou cinco títulos que gosta: \"Dexter\", \"Forest Gump\", \"The Walking Dead\", \"Stranger Things\" e \"Top Gun\". Para o nosso registro, poderia escolher até três desses como seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "pode escolher qualquer um"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, entendo que você gosta de todos os títulos mencionados, mas para o nosso registro, poderia escolher três deles que você considera seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "dexter, forest gump, the walking dead"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_165541_740\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-05-01T18:30:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "Dexter",
+      "Forest Gump",
+      "The Walking Dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_170223_773\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Rominho?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você mencionou que gosta de assistir romance e rock. Rock é um gênero musical, você poderia me dizer um outro gênero de filme ou série que você gosta, além de romance?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Rominho?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['the walking dead', 'dexter', 'top gun']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-04-20T18:25:43Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"the walking dead\", \"dexter\", \"top gun\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_170223_773\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá sou rominho das tapioca"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Rominho?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de assistir romance e rock"
+  },
+  {
+    "role": "assistant",
+    "content": "Você mencionou que gosta de assistir romance e rock. Rock é um gênero musical, você poderia me dizer um outro gênero de filme ou série que você gosta, além de romance?"
+  },
+  {
+    "role": "user",
+    "content": "sim, gosto de drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Rominho?"
+  },
+  {
+    "role": "user",
+    "content": "the walking dead, dexter, top gun, forest gump"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_170223_773\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-04-20T18:25:43Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "the walking dead",
+      "dexter",
+      "top gun"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_175805_201\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Poderia me dizer quais são até três filmes ou séries favoritos seus, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['top gun', 'forest gump']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-04-20T18:25:43.511Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"top gun\", \"forest gump\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_175805_201\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Poderia me dizer quais são até três filmes ou séries favoritos seus, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de top gun e forest gump"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_175805_201\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-04-20T18:25:43.511Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "top gun",
+      "forest gump"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_175913_853\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'top gun', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-05-05T12:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"forest gump\", \"top gun\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_175913_853\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "forest gump, top gun, the walking dead e stranger things"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_175913_853\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-05-05T12:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "forest gump",
+      "top gun",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_180432_219\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'dorama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['top gun', 'forest gump', 'stranger things']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-14T12:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"dorama\"],\n    \"filmes_favoritos\": [\"top gun\", \"forest gump\", \"stranger things\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_180432_219\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de romance e dorama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, forest gump, stranger things, the walking dead"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_180432_219\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-14T12:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "dorama"
+    ],
+    "filmes_favoritos": [
+      "top gun",
+      "forest gump",
+      "stranger things"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_181342_580\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você mencionou que gosta de filmes de romance. Poderia me dizer mais um gênero de filmes ou séries que você também gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Desculpe, Lucas, mas \"rock\" não é um gênero de filmes ou séries. Você poderia me dizer outro gênero que você gosta, além de romance?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são seus três filmes ou séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['top gun', 'elite', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-09-22T18:25:43.511Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"top gun\", \"elite\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_181342_580\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas!"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Você mencionou que gosta de filmes de romance. Poderia me dizer mais um gênero de filmes ou séries que você também gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "rock"
+  },
+  {
+    "role": "assistant",
+    "content": "Desculpe, Lucas, mas \"rock\" não é um gênero de filmes ou séries. Você poderia me dizer outro gênero que você gosta, além de romance?"
+  },
+  {
+    "role": "user",
+    "content": "claro, drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são seus três filmes ou séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, elite, the walking dead, stranger things e dexter"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_181342_580\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-09-22T18:25:43.511Z",
+    "source": "user_survey",
+    "schema_version": "1.0.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "top gun",
+      "elite",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_182424_091\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, percebi que você mencionou mais do que três filmes ou séries favoritos. Poderia, por favor, confirmar quais são os seus três principais favoritos entre \"top gun\", \"elite\", \"the walking dead\", \"stranger things\" e \"dexter\"?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, percebi que você mencionou quatro filmes ou séries favoritos, mas nosso sistema só pode registrar até três. Poderia, por favor, confirmar quais são os seus três principais favoritos entre \"top gun\", \"elite\", \"the walking dead\" e \"stranger things\"?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, entendo que você gosta de muitos filmes e séries, mas para o nosso registro, preciso que você selecione apenas três entre \"top gun\", \"elite\", \"the walking dead\" e \"stranger things\". Quais seriam os seus três favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você mencionou \"top gun\" e \"elite\" como seus filmes favoritos. Você tem mais um filme ou série que gostaria de adicionar à lista de seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['top gun', 'elite', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-05-01T00:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"top gun\", \"elite\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_182424_091\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, elite, the walking dead, stranger things e dexter"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, percebi que você mencionou mais do que três filmes ou séries favoritos. Poderia, por favor, confirmar quais são os seus três principais favoritos entre \"top gun\", \"elite\", \"the walking dead\", \"stranger things\" e \"dexter\"?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, elite, the walking dead, stranger things"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, percebi que você mencionou quatro filmes ou séries favoritos, mas nosso sistema só pode registrar até três. Poderia, por favor, confirmar quais são os seus três principais favoritos entre \"top gun\", \"elite\", \"the walking dead\" e \"stranger things\"?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, elite, the walking dead, stranger things"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, entendo que você gosta de muitos filmes e séries, mas para o nosso registro, preciso que você selecione apenas três entre \"top gun\", \"elite\", \"the walking dead\" e \"stranger things\". Quais seriam os seus três favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, elite"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você mencionou \"top gun\" e \"elite\" como seus filmes favoritos. Você tem mais um filme ou série que gostaria de adicionar à lista de seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "the walking dead"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_182424_091\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-05-01T00:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "top gun",
+      "elite",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_182652_291\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas, tudo bem? Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são os seus três filmes ou séries favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['top gun', 'elite', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-22T12:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"top gun\", \"elite\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_182652_291\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "oi, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas, tudo bem? Você poderia me dizer quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são os seus três filmes ou séries favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, elite, the walking dead, stranger things"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_182652_291\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-22T12:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "top gun",
+      "elite",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183222_639\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Poderia me dizer quais são até três filmes ou séries favoritos seus, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você mencionou quatro filmes e séries favoritos, mas nosso sistema só pode registrar até três. Poderia confirmar quais são os três que você mais gosta entre \"Forest Gump\", \"Top Gun\", \"Elite\" e \"Charlote\"?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['top gun', 'elite', 'the walking dead']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-15T12:00:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"top gun\", \"elite\", \"the walking dead\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183222_639\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Poderia me dizer quais são até três filmes ou séries favoritos seus, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "forest gump, top gun, elite e charlote"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você mencionou quatro filmes e séries favoritos, mas nosso sistema só pode registrar até três. Poderia confirmar quais são os três que você mais gosta entre \"Forest Gump\", \"Top Gun\", \"Elite\" e \"Charlote\"?"
+  },
+  {
+    "role": "user",
+    "content": "top gun, elite, the walking dead"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183222_639\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-15T12:00:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "top gun",
+      "elite",
+      "the walking dead"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183401_572\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Você poderia me dizer qual é o outro gênero de filmes ou séries que você também gosta, além do romance?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'terror']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos', 'subgenero_terror_preferido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'elite', 'dexter']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['subgenero_terror_preferido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, já que você gosta de filmes de terror, poderia me dizer qual subgênero de terror você prefere? Por exemplo, psicológico, sobrenatural, slasher, entre outros.",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'subgenero_terror_preferido': 'psicológico'}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-09-22T18:25:43.511Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"terror\"],\n    \"filmes_favoritos\": [\"forest gump\", \"elite\", \"dexter\"],\n    \"subgenero_terror_preferido\": \"psicológico\"\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183401_572\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer qual é o outro gênero de filmes ou séries que você também gosta, além do romance?"
+  },
+  {
+    "role": "user",
+    "content": "terrir"
+  },
+  {
+    "role": "assistant",
+    "content": "Você poderia me dizer quais são seus três filmes ou séries favoritos, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "forest gump, elite, dexter e charlote"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, já que você gosta de filmes de terror, poderia me dizer qual subgênero de terror você prefere? Por exemplo, psicológico, sobrenatural, slasher, entre outros."
+  },
+  {
+    "role": "user",
+    "content": "psicológico"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183401_572\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-09-22T18:25:43.511Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "terror"
+    ],
+    "filmes_favoritos": [
+      "forest gump",
+      "elite",
+      "dexter"
+    ],
+    "subgenero_terror_preferido": "psicológico"
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183527_466\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas, tudo bem? Poderia me dizer quais são seus dois ou mais gêneros de filmes ou séries preferidos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me dizer quais são seus três filmes ou séries favoritos, preferencialmente nos gêneros de romance e drama que você mencionou?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'top gun', 'elite', 'charlote']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-01T00:00:00Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"forest gump\", \"top gun\", \"elite\", \"charlote\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183527_466\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "oi meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas, tudo bem? Poderia me dizer quais são seus dois ou mais gêneros de filmes ou séries preferidos?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me dizer quais são seus três filmes ou séries favoritos, preferencialmente nos gêneros de romance e drama que você mencionou?"
+  },
+  {
+    "role": "user",
+    "content": "forest gump, top gun, elite e charlote"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_183527_466\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-01T00:00:00Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "forest gump",
+      "top gun",
+      "elite",
+      "charlote"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_184254_615\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'generos_preferidos': ['romance', 'drama']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['filmes_favoritos']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Poderia me dizer quais são até três filmes ou séries favoritos seus, Lucas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, percebi que você mencionou quatro filmes ou séries como seus favoritos, mas nosso sistema só pode registrar até três. Poderia escolher três entre \"Forest Gump\", \"Elite\", \"Sherlock Holmes\" e \"Dexter\" para serem seus favoritos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'filmes_favoritos': ['forest gump', 'elite', 'sherlock holmes']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-10T14:30:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"generos_preferidos\": [\"romance\", \"drama\"],\n    \"filmes_favoritos\": [\"forest gump\", \"elite\", \"sherlock holmes\"],\n    \"subgenero_terror_preferido\": null\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_184254_615\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "sou lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Quais são os dois ou mais gêneros de filmes ou séries que você mais gosta de assistir, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "romance e drama"
+  },
+  {
+    "role": "assistant",
+    "content": "Poderia me dizer quais são até três filmes ou séries favoritos seus, Lucas?"
+  },
+  {
+    "role": "user",
+    "content": "forest gump, elite, sherlock holmes e dexter"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, percebi que você mencionou quatro filmes ou séries como seus favoritos, mas nosso sistema só pode registrar até três. Poderia escolher três entre \"Forest Gump\", \"Elite\", \"Sherlock Holmes\" e \"Dexter\" para serem seus favoritos?"
+  },
+  {
+    "role": "user",
+    "content": "os tres primeiros"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260208_184254_615\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-10T14:30:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_preferidos": [
+      "romance",
+      "drama"
+    ],
+    "filmes_favoritos": [
+      "forest gump",
+      "elite",
+      "sherlock holmes"
+    ],
+    "subgenero_terror_preferido": null
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_213554_491\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas, poderia me informar quais são suas duas culinárias preferidas que você gosta de consumir com mais frequência?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Entendi que você gosta de purê, Lucas. Você poderia me dizer qual é a outra culinária que você mais gosta de consumir?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'culinarias_preferidas': ['purê', 'macarrão']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['endereco_entrega']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, poderia me informar o endereço completo onde você costuma receber seus pedidos?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, para completar o endereço de entrega, você poderia me informar o número, cidade e estado da rua Aprigio Veloso?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, para finalizar, você poderia me informar o estado onde fica a cidade de Campina Grande?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia confirmar se o estado onde fica a cidade de Campina Grande é a Paraíba?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'endereco_entrega': 'Rua Aprigio Veloso, 175, Campina Grande, Paraíba'}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-04-01T12:00:00Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"culinarias_preferidas\": [\"purê\", \"macarrão\"],\n    \"endereco_entrega\": \"Rua Aprigio Veloso, 175, Campina Grande, Paraíba\"\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_213554_491\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas, poderia me informar quais são suas duas culinárias preferidas que você gosta de consumir com mais frequência?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de purê"
+  },
+  {
+    "role": "assistant",
+    "content": "Entendi que você gosta de purê, Lucas. Você poderia me dizer qual é a outra culinária que você mais gosta de consumir?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de macarrão"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, poderia me informar o endereço completo onde você costuma receber seus pedidos?"
+  },
+  {
+    "role": "user",
+    "content": "rua aprigio veloso"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para completar o endereço de entrega, você poderia me informar o número, cidade e estado da rua Aprigio Veloso?"
+  },
+  {
+    "role": "user",
+    "content": "numero 175, campina grande"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para finalizar, você poderia me informar o estado onde fica a cidade de Campina Grande?"
+  },
+  {
+    "role": "user",
+    "content": "você sabe"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia confirmar se o estado onde fica a cidade de Campina Grande é a Paraíba?"
+  },
+  {
+    "role": "user",
+    "content": "é isso mesmo"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_213554_491\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-04-01T12:00:00Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "culinarias_preferidas": [
+      "purê",
+      "macarrão"
+    ],
+    "endereco_entrega": "Rua Aprigio Veloso, 175, Campina Grande, Paraíba"
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_214030_080\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Olá Lucas, tudo bem? Para que eu possa te ajudar melhor, você poderia me informar quais são suas culinárias preferidas? Por exemplo, você pode gostar de culinária italiana, japonesa, nordestina, entre outras.",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Entendi que você gosta de macarrão, Lucas. Isso me faz pensar que você pode gostar de culinária italiana. Estou certo? E tem alguma outra culinária que você também aprecia?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, para que possamos enviar seus pedidos para o local correto, você poderia me informar o endereço completo onde costuma receber suas entregas?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, para garantir que estamos enviando para o local correto, você poderia fornecer o endereço completo da Rua Aprigio Veloso, incluindo número, cidade e CEP?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, para completar o endereço de entrega, você poderia me informar o número da residência e o CEP na Rua Aprigio Veloso, em Campina Grande, Paraíba?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, para finalizar o endereço de entrega, você poderia me informar o número da sua residência na Rua Aprigio Veloso, em Campina Grande, Paraíba?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, entendi que o seu endereço na Rua Aprigio Veloso, em Campina Grande, Paraíba, não possui número. Para que possamos completar o endereço de entrega, você poderia me informar algum ponto de referência ou alguma outra informação que possa ajudar a identificar a sua residência?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, para confirmar, suas culinárias preferidas são a italiana e a japonesa, correto?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'culinarias_preferidas': ['italiana', 'japonesa']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['endereco_entrega']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, para finalizar, poderia confirmar se o seu endereço de entrega é \"Rua Aprigio Veloso, sem número, próximo ao posto Ipiranga, Campina Grande, Paraíba, CEP 58429170\"?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'endereco_entrega': 'Rua Aprigio Veloso, sem número, próximo ao posto Ipiranga, Campina Grande, Paraíba, CEP 58429170'}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-04-21T14:30:00Z\",\n    \"source\": \"user_input\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"culinarias_preferidas\": [\"italiana\", \"japonesa\"],\n    \"endereco_entrega\": \"Rua Aprigio Veloso, sem número, próximo ao posto Ipiranga, Campina Grande, Paraíba, CEP 58429170\"\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_214030_080\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Olá Lucas, tudo bem? Para que eu possa te ajudar melhor, você poderia me informar quais são suas culinárias preferidas? Por exemplo, você pode gostar de culinária italiana, japonesa, nordestina, entre outras."
+  },
+  {
+    "role": "user",
+    "content": "eu gosto de comer macarrão"
+  },
+  {
+    "role": "assistant",
+    "content": "Entendi que você gosta de macarrão, Lucas. Isso me faz pensar que você pode gostar de culinária italiana. Estou certo? E tem alguma outra culinária que você também aprecia?"
+  },
+  {
+    "role": "user",
+    "content": "sim, gosto de sushi também"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para que possamos enviar seus pedidos para o local correto, você poderia me informar o endereço completo onde costuma receber suas entregas?"
+  },
+  {
+    "role": "user",
+    "content": "Rua aprigio veloso"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para garantir que estamos enviando para o local correto, você poderia fornecer o endereço completo da Rua Aprigio Veloso, incluindo número, cidade e CEP?"
+  },
+  {
+    "role": "user",
+    "content": "campina grande, paraíba"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para completar o endereço de entrega, você poderia me informar o número da residência e o CEP na Rua Aprigio Veloso, em Campina Grande, Paraíba?"
+  },
+  {
+    "role": "user",
+    "content": "o cep é 58429170"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para finalizar o endereço de entrega, você poderia me informar o número da sua residência na Rua Aprigio Veloso, em Campina Grande, Paraíba?"
+  },
+  {
+    "role": "user",
+    "content": "é um endereço sem número"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, entendi que o seu endereço na Rua Aprigio Veloso, em Campina Grande, Paraíba, não possui número. Para que possamos completar o endereço de entrega, você poderia me informar algum ponto de referência ou alguma outra informação que possa ajudar a identificar a sua residência?"
+  },
+  {
+    "role": "user",
+    "content": "sim, fica próximo ao posto ipiranga"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para confirmar, suas culinárias preferidas são a italiana e a japonesa, correto?"
+  },
+  {
+    "role": "user",
+    "content": "correto"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, para finalizar, poderia confirmar se o seu endereço de entrega é \"Rua Aprigio Veloso, sem número, próximo ao posto Ipiranga, Campina Grande, Paraíba, CEP 58429170\"?"
+  },
+  {
+    "role": "user",
+    "content": "sim é isso mesmo"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_214030_080\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-04-21T14:30:00Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "culinarias_preferidas": [
+      "italiana",
+      "japonesa"
+    ],
+    "endereco_entrega": "Rua Aprigio Veloso, sem número, próximo ao posto Ipiranga, Campina Grande, Paraíba, CEP 58429170"
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_215958_449\agent_logs.json
+
+
+==================== FILE ====================
+[
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, quais são as duas ou mais culinárias que você gosta de consumir com mais frequência?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como ASK",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: campo vazio",
+  "ASK: pergunta gerada: Lucas, você mencionou que gosta de macarrão. Isso é uma culinária italiana. Você poderia me dizer outra culinária que você gosta de consumir com frequência?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'culinarias_preferidas': ['italiana', 'japonesa']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['culinarias_evitar', 'frequencia_delivery_semanal', 'locais_favoritos', 'endereco_entrega']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, existe alguma culinária que você prefere evitar ou não gosta?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'culinarias_evitar': ['nordestina']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['frequencia_delivery_semanal', 'locais_favoritos', 'endereco_entrega']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, quantas vezes por semana você costuma pedir comida por delivery?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'frequencia_delivery_semanal': 14}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['locais_favoritos', 'endereco_entrega']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me informar até três locais, como restaurantes ou lanchonetes, que você mais gosta de pedir comida?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'locais_favoritos': ['lupe pizzas', 'bar do cuzcuz']}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horario_preferido_pedido', 'endereco_entrega']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, você poderia me informar o endereço completo onde você costuma receber seus pedidos de comida?",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'endereco_entrega': 'rua aprigio veloso 175'}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: ['horario_preferido_pedido']",
+  "ASK: gerando pergunta para campo faltante...",
+  "ASK: pergunta gerada: Lucas, em qual horário ou tipo de refeição você costuma fazer seus pedidos de comida mais frequentemente? Por exemplo, no almoço, jantar ou à noite.",
+  "STARTER: Iniciando classificação de intenção...",
+  "STARTER: Intenção classificada como EXTRACT",
+  "EXTRACTOR: extraindo informações...",
+  "EXTRACTOR: extraído {'horario_preferido_pedido': 'janta'}",
+  "MISSING: verificando campos faltantes via LLM...",
+  "MISSING: campos faltantes identificados: []",
+  "OUTPUT: gerando JSON final...",
+  "OUTPUT: JSON final gerado: {\n  \"metadata\": {\n    \"created_at\": \"2022-03-24T18:20:00Z\",\n    \"source\": \"user_survey\",\n    \"schema_version\": \"1.0\"\n  },\n  \"data\": {\n    \"culinarias_preferidas\": [\"italiana\", \"japonesa\"],\n    \"culinarias_evitar\": [\"nordestina\"],\n    \"frequencia_delivery_semanal\": 14,\n    \"locais_favoritos\": [\"lupe pizzas\", \"bar do cuzcuz\"],\n    \"horario_preferido_pedido\": \"janta\",\n    \"endereco_entrega\": \"rua aprigio veloso 175\"\n  },\n  \"missing_fields\": []\n}"
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_215958_449\conversation.json
+
+
+==================== FILE ====================
+[
+  {
+    "role": "user",
+    "content": "Olá, meu nome é lucas"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, quais são as duas ou mais culinárias que você gosta de consumir com mais frequência?"
+  },
+  {
+    "role": "user",
+    "content": "gosto de macarrão"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você mencionou que gosta de macarrão. Isso é uma culinária italiana. Você poderia me dizer outra culinária que você gosta de consumir com frequência?"
+  },
+  {
+    "role": "user",
+    "content": "sim, gosto de sushi"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, existe alguma culinária que você prefere evitar ou não gosta?"
+  },
+  {
+    "role": "user",
+    "content": "eu não gosto de comida nordestina"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, quantas vezes por semana você costuma pedir comida por delivery?"
+  },
+  {
+    "role": "user",
+    "content": "duas vezes por dia"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me informar até três locais, como restaurantes ou lanchonetes, que você mais gosta de pedir comida?"
+  },
+  {
+    "role": "user",
+    "content": "gosto da lupe pizzas e do bar do cuzcuz"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, você poderia me informar o endereço completo onde você costuma receber seus pedidos de comida?"
+  },
+  {
+    "role": "user",
+    "content": "rua aprigio veloso 175"
+  },
+  {
+    "role": "assistant",
+    "content": "Lucas, em qual horário ou tipo de refeição você costuma fazer seus pedidos de comida mais frequentemente? Por exemplo, no almoço, jantar ou à noite."
+  },
+  {
+    "role": "user",
+    "content": "na janta"
+  }
+]
+
+
+==================== FILE ====================
+PATH: conversation_logs\session_20260210_215958_449\finaljson.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2022-03-24T18:20:00Z",
+    "source": "user_survey",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "culinarias_preferidas": [
+      "italiana",
+      "japonesa"
+    ],
+    "culinarias_evitar": [
+      "nordestina"
+    ],
+    "frequencia_delivery_semanal": 14,
+    "locais_favoritos": [
+      "lupe pizzas",
+      "bar do cuzcuz"
+    ],
+    "horario_preferido_pedido": "janta",
+    "endereco_entrega": "rua aprigio veloso 175"
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: demo\streamlit_app.py
+
+
+==================== FILE ====================
+import streamlit as st
+import os
+import sys
+import json
+from typing import Dict, Any
+
+
+# Caminho para o repo
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
+
+from app.core.schema import Schema
+from app.core.extractor import ExtractorAgent
+from app.utils.logger import save_session_data
+
+st.set_page_config(page_title="ChatBoB", page_icon="🤖")
+
+
+# Carrega schema e agente
+schema_path = os.path.join(repo_root, "examples", "schema_example.json")
+schema = Schema.load_from_file(schema_path)
+agent = ExtractorAgent(schema)
+
+# Estado inicial padrão
+DEFAULT_STATE: Dict[str, Any] = {
+    "last_user_message": "",
+    "last_asked_question": "",
+    "schema": schema,
+    "extracted": {},
+    "missing_fields": [],
+    "question_to_ask": None,
+    "final_json": None,
+    "context_messages": [],
+    "status_finished": False,
+    "next": None,
+    "logs": [],
+    "messages": [],  # mensagens exibidas no chat
+    "_session_saved": False
+}
+
+# Inicializa state + mensagem inicial automática
+if "state" not in st.session_state:
+    st.session_state.state = DEFAULT_STATE.copy()
+    
+    initial_msg = {
+        "role": "assistant",
+        "content": "Olá! Sou o **ChatBoB**, como posso te chamar?"
+    }
+    
+    # 1. Adiciona ao histórico visual do chat
+    st.session_state.state["messages"].append(initial_msg)
+    
+    # 2. Adiciona ao contexto lógico do BOT (para ele saber que já se apresentou)
+    st.session_state.state["context_messages"].append(initial_msg)
+    
+
+
+def run_graph_with_input(user_message: str):
+    """Envia mensagem para o agente e salva os resultados no state."""
+    state = st.session_state.state
+
+    # salva no histórico visual
+    state["messages"].append({"role": "user", "content": user_message})
+
+    # salva no contexto interno
+    state["last_user_message"] = user_message
+
+    # o agente gera updates
+    updates = agent.feed_message(user_message, state)
+    if isinstance(updates, dict):
+        state.update(updates)
+
+    # se o agente fez alguma pergunta, ela aparece no chat
+    if state.get("question_to_ask") and not state.get("status_finished"):
+        state["messages"].append({
+            "role": "assistant",
+            "content": state["question_to_ask"]
+        })
+
+    st.session_state.state = state
+
+
+st.title("🤖 ChatBoB")
+st.info("""
+### 🧪 Instruções do Experimento (~5 minutos)
+Olá! Este chat faz parte da minha pesquisa de TCC. O ChatBoB fará algumas perguntas para coletar informações. 
+**Importante:** suas respostas não precisam representar seus gostos reais, mas devem ser respostas realistas para que o estudo funcione.
+
+Para testarmos a inteligência do agente, preciso que em **pelo menos duas perguntas** você tente desafiar as regras do diálogo
+        
+Exemplos de como você pode testar os limites dele:
+
+- **Se ele pedir "dois ou mais" itens:** Tente passar apenas um.
+- **Se ele pedir "até 3" itens:** Tente falar 4 ou mais.
+- **Respostas fora do padrão:** Tente dar respostas que não respondam diretamente ao que foi pedido ou diga que não quer responder.
+- **Dúvidas:** Se você não entender o que ele quer, pode perguntar diretamente ao ChatBoB.
+
+Às demais perguntas, responda naturalmente. O objetivo é observar como o ChatBoB lida com essas situações.
+
+**Muito obrigado!**
+""")
+
+state = st.session_state.state
+
+# -------------------------
+#  EXIBE TODAS AS MENSAGENS DO CHAT
+# -------------------------
+for msg in state["messages"]:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# Se o agente finalizou, mostra o JSON final e uma mensagem de conclusão
+if state.get("status_finished") and state.get("final_json"):
+    # Verifica se já não foi exibida a mensagem final
+    if not state.get("_session_saved", False):
+        save_session_data(state)
+        state["_session_saved"] = True
+
+    last_message = state["messages"][-1] if state["messages"] else {}
+    if last_message.get("role") != "assistant" or "extração finalizada" not in last_message.get("content", "").lower():
+        final_message = "🎉 **Extração finalizada!** Aqui está o resultado estruturado:\n\n```json\n" + json.dumps(state["final_json"], indent=2, ensure_ascii=False) + "\n```"
+        state["messages"].append({
+            "role": "assistant", 
+            "content": final_message
+        })
+        st.rerun()
+
+# -------------------------
+#  INPUT DO USUÁRIO
+# -------------------------
+if not state.get("status_finished"):
+    user_message = st.chat_input("Digite sua mensagem...")
+
+    if user_message:
+        with st.chat_message("user"):
+            st.markdown(user_message)
+
+        # indicador visual de processamento
+        with st.spinner("ChatBoB está pensando..."):
+            run_graph_with_input(user_message)
+
+        # recarrega para exibir mensagem nova
+        st.rerun()
+else:
+    # Mostra mensagem quando finalizado
+    st.info("✅ Extração concluída! O agente coletou todas as informações necessárias.")
+
+
+# -------------------------
+#  BLOCO DEBAIXO DO CHAT — STATE + LOGS
+# -------------------------
+
+st.markdown("---")
+
+with st.expander("📌 Estado Atual do Agente"):
+    st.json({
+        "extracted": state.get("extracted"),
+        "missing_fields": state.get("missing_fields"),
+        "next": state.get("next"),
+        "last_asked_question": state.get("last_asked_question"),
+        "status_finished": state.get("status_finished"),
+    })
+
+with st.expander("📜 Logs do Agente"):
+    for log in state.get("logs", []):
+        st.write("•", log)
+
+
+
+==================== FILE ====================
+PATH: examples\extras\schema_example.json
+
+
+==================== FILE ====================
+{
+  "generos_musicais_favoritos": {
+    "description": "dois ou mais gêneros musicais que o usuário mais aprecia e costuma ouvir com maior frequência.",
+    "type": "List",
+    "required": true
+  },
+  "generos_musicais_avessos": {
+    "description": "Um ou mais gêneros musicais que o usuário menos gosta de ouvir, sendo normalmente sua última opção de escolha",
+    "type": "List",
+    "required": true
+  },
+  "artistas_favoritos": {
+    "description": "Um ou mais artistas preferidos do usuário, cujas músicas ele costuma ouvir com mais frequência.",
+    "type": "List",
+    "required": true
+  },
+  "musicas_favoritas": {
+    "description": "Até cinco músicas favoritas do usuário, as quais ele costuma ouvir com mais frequência.",
+    "type": "List",
+    "required": false
+  }
+}
+
+
+==================== FILE ====================
+PATH: examples\extras\schema_example2.json
+
+
+==================== FILE ====================
+{
+  "destino_principal": {
+    "description": "Cidade ou país que o usuário deseja visitar como destino principal da viagem.",
+    "type": "String",
+    "required": true
+  },
+  "duracao_viagem_dias": {
+    "description": "Quantidade total de dias da viagem, considerando ida e volta. Deve ser um número inteiro maior que zero.",
+    "type": "Number",
+    "required": true
+  },
+  "interesses_viagem": {
+    "description": "De um a três interesses principais da viagem, como gastronomia, natureza, compras ou cultura.",
+    "type": "List",
+    "required": true
+  },
+  "cidades_secundarias": {
+    "description": "Até duas cidades adicionais que o usuário pretende visitar, apenas se a duração da viagem for maior que 5 dias.",
+    "type": "List",
+    "required": false
+  }
+}
+
+
+==================== FILE ====================
+PATH: examples\extras\schema_example3.json
+
+
+==================== FILE ====================
+{
+  "nivel_atividade_fisica": {
+    "description": "Classificação geral do nível de atividade física do usuário: sedentário, moderado ou ativo.",
+    "type": "String",
+    "required": true
+  },
+  "atividades_praticadas": {
+    "description": "Até três atividades físicas que o usuário pratica atualmente. Caso o usuário pratique mais, o agente deve pedir que ele selecione as mais frequentes.",
+    "type": "List",
+    "required": true
+  },
+  "restricoes_fisicas": {
+    "description": "Restrições físicas ou limitações relevantes para a prática de atividades físicas, se existirem.",
+    "type": "List",
+    "required": false
+  }
+}
+
+
+==================== FILE ====================
+PATH: examples\extras\schema_example4.json
+
+
+==================== FILE ====================
+{
+  "generos_favoritos": {
+    "description": "De dois a quatro gêneros de filmes que o usuário mais gosta de assistir. Os gêneros não devem ser redundantes (ex: ação e ação/aventura).",
+    "type": "List",
+    "required": true
+  },
+  "generos_evitar": {
+    "description": "Um ou dois gêneros de filmes que o usuário evita assistir, mesmo quando são populares ou bem avaliados.",
+    "type": "List",
+    "required": true
+  },
+  "filmes_favoritos": {
+    "description": "Até três filmes favoritos do usuário. Caso o usuário mencione mais de três, o agente deve ajudá-lo a priorizar.",
+    "type": "List",
+    "required": true
+  },
+  "diretores_preferidos": {
+    "description": "Um ou mais diretores que o usuário aprecia, podendo repetir diretores já associados aos filmes favoritos.",
+    "type": "List",
+    "required": false
+  }
+}
+
+
+==================== FILE ====================
+PATH: examples\final_response.json
+
+
+==================== FILE ====================
+{
+  "metadata": {
+    "created_at": "2025-11-26T19:00:00Z",
+    "source": "chat",
+    "schema_version": "1.0.0"
+  },
+  "data": {
+    "generos_musicais_favoritos": [
+      "Rock",
+      "MPB"
+    ],
+    "generos_musicais_avessos": [
+      "Funk",
+      "Pagode"
+    ],
+    "artistas_favoritos": [
+      "Legião Urbana",
+      "Djavan"
+    ],
+    "musicas_favoritas": [
+      "Tempo Perdido",
+      "Oceano"
+    ]
+  },
+  "missing_fields": []
+}
+
+
+==================== FILE ====================
+PATH: examples\run_demo.py
+
+
+==================== FILE ====================
+#interface simples para testes
+
+
+==================== FILE ====================
+PATH: examples\schema_example.json
+
+
+==================== FILE ====================
+{
+  "culinarias_preferidas": {
+    "description": "Duas ou mais culinárias que o usuário gosta de consumir com mais frequência (ex: italiana, japonesa, nordestina).",
+    "type": "List",
+    "required": true
+  },
+
+  "culinarias_evitar": {
+    "description": "Uma ou mais culinárias que o usuário evita ou não gosta.",
+    "type": "List",
+    "required": true
+  },
+
+  "frequencia_delivery_semanal": {
+    "description": "Número aproximado de vezes por semana que o usuário pede comida por delivery.",
+    "type": "Number",
+    "required": true
+  },
+
+  "locais_favoritos": {
+    "description": "Até três locais (restaurantes, lanchonetes ou estabelecimentos) que o usuário mais gosta de comer ou pedir comida.",
+    "type": "List",
+    "required": true
+  },
+
+  "horario_preferido_pedido": {
+    "description": "Período do dia em que o usuário costuma pedir comida. Os resultados possíveis são apenas manhã, tarde, ou noite. Se a resposta do usuário contiver essa informação implicitamente, o resultado pode ser inferido sem fazer perguntas adicionais ao usuário. Por exemplo, almoço pode ser inferido para tarde, jantar pode ser inferido para noite. Coletar essa informação apenas se o usuário pedir delivery com frequência igual ou superior a duas vezes por semana.",
+    "type": "String",
+    "required": false
+  },
+
+  "endereco_entrega": {
+    "description": "Endereço completo onde o usuário costuma receber pedidos, de preferência com um ponto de referência.",
+    "type": "String",
+    "required": true
+  }
+}
+
+
+==================== FILE ====================
+PATH: README.md
+
+
+==================== FILE ====================
+# Chat Data Extractor
+
+Intelligent agent for structured data extraction from chat conversations. 
+Converts natural dialogue into structured JSON using schemas for databases, forms, and APIs.
+
+## Features
+- Dynamic schema-based extraction
+- Multi-destination support (SQL, NoSQL, Forms)
+- Context-aware data capture
+- JSON validation and structuring
+- Easy integration
+
+## How It Works
+
+### 1. Define Your Schema
+Create a JSON schema defining the fields you want to extract:
+
+```json
+{
+  "generos_musicais_favoritos": {
+    "description": "dois ou mais gêneros musicais que o usuário mais aprecia e costuma ouvir com maior frequência",
+    "type": "List",
+    "required": true
+  },
+  "generos_musicais_avessos": {
+    "description": "Um ou mais gêneros musicais que o usuário menos gosta de ouvir, sendo normalmente sua última opção de escolha",
+    "type": "List",
+    "required": true
+  },
+  "artistas_favoritos": {
+    "description": "Um ou mais artistas preferidos do usuário, cujas músicas ele costuma ouvir com mais frequência",
+    "type": "List",
+    "required": true
+  },
+  "musicas_favoritas": {
+    "description": "Até cinco músicas favoritas do usuário, as quais ele costuma ouvir com mais frequência",
+    "type": "List",
+    "required": false
+  }
+}
+```
+
+### 2. Natural Conversation
+The agent conducts a natural conversation to collect the required information:
+
+```
+Agent: Olá! Para começarmos: qual é o seu nome?
+User: Meu nome é Lucas!
+
+Agent: Lucas, quais são seus gêneros musicais favoritos?
+User: Gosto de rock e pop
+
+Agent: E quais gêneros você menos gosta?
+User: Não curto muito sertanejo
+
+Agent: Quais são seus artistas favoritos?
+User: Metallica é meu favorito
+```
+
+### 3. Structured Output
+The agent automatically extracts and structures the data into JSON:
+
+```json
+{
+  "metadata": {
+    "created_at": "2024-01-31T22:27:56Z",
+    "source": "user_input",
+    "schema_version": "1.0"
+  },
+  "data": {
+    "generos_musicais_favoritos": ["rock", "pop"],
+    "generos_musicais_avessos": ["sertanejo"],
+    "artistas_favoritos": ["metallica"],
+    "musicas_favoritas": ["money"]
+  },
+  "missing_fields": []
+}
+```
+
+## Field Properties
+
+- **description**: Detailed description for the agent to understand what to extract
+- **type**: Data type (String, Number, List, Boolean)
+- **required**: Whether the field is mandatory (true/false)
+
+## Run
+```bash
+streamlit run demo/streamlit_app.py
+```
+
+## Features
+- **Adaptive Questioning**: Adjusts strategy based on user responses
+- **Data Normalization**: Automatically converts natural language to structured data
+- **Validation**: Ensures extracted data matches schema requirements
+- **Session Logging**: Saves conversation logs and extracted data
+- **Multi-domain Support**: Works with any schema design
+
+**Tags:** chatbot, data-extraction, json, parser, natural-language, conversation-ai, structured-data
+
+
+==================== FILE ====================
+PATH: repo_to_text.py
+
+
+==================== FILE ====================
+import os
+import argparse
+from pathlib import Path
+
+DEFAULT_IGNORE_DIRS = {
+    ".git",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "env",
+    "node_modules",
+    ".idea",
+    ".vscode",
+    "dist",
+    "build"
+}
+
+DEFAULT_EXTENSIONS = {
+    ".py",
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml"
+}
+
+DELIMITER = "\n\n==================== FILE ====================\n"
+
+
+def count_words(text):
+    return len(text.split())
+
+
+def should_include(file_path, allowed_extensions):
+    return file_path.suffix.lower() in allowed_extensions
+
+
+def collect_files(repo_path, allowed_extensions):
+    files = []
+
+    for root, dirs, filenames in os.walk(repo_path):
+        # remove ignored dirs
+        dirs[:] = [d for d in dirs if d not in DEFAULT_IGNORE_DIRS]
+
+        for filename in filenames:
+            file_path = Path(root) / filename
+            if should_include(file_path, allowed_extensions):
+                files.append(file_path)
+
+    return sorted(files)
+
+
+def split_into_chunks(files, repo_path, max_words):
+    chunks = []
+    current_chunk = ""
+    current_word_count = 0
+
+    for file_path in files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Erro ao ler {file_path}: {e}")
+            continue
+
+        relative_path = file_path.relative_to(repo_path)
+
+        formatted_content = (
+            f"{DELIMITER}"
+            f"PATH: {relative_path}\n"
+            f"{DELIMITER}"
+            f"{content}\n"
+        )
+
+        words = count_words(formatted_content)
+
+        if current_word_count + words > max_words:
+            chunks.append(current_chunk)
+            current_chunk = formatted_content
+            current_word_count = words
+        else:
+            current_chunk += formatted_content
+            current_word_count += words
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
+
+def save_chunks(chunks, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+
+    for i, chunk in enumerate(chunks, start=1):
+        output_file = Path(output_dir) / f"repo_part_{i}.txt"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(chunk)
+
+        print(f"Arquivo criado: {output_file}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Converte um repositório em arquivos .txt compatíveis com NotebookLM")
+
+    parser.add_argument("--repo_path", required=True, help="Caminho do repositório")
+    parser.add_argument("--output_dir", required=True, help="Diretório de saída")
+    parser.add_argument("--max_words", type=int, default=450000,
+                        help="Máximo de palavras por arquivo (default: 450000)")
+    parser.add_argument("--extensions", nargs="*", default=None,
+                        help="Extensões permitidas (ex: .py .md .json)")
+
+    args = parser.parse_args()
+
+    repo_path = Path(args.repo_path).resolve()
+
+    if not repo_path.exists():
+        print("Repositório não encontrado.")
+        return
+
+    allowed_extensions = set(args.extensions) if args.extensions else DEFAULT_EXTENSIONS
+
+    print("Coletando arquivos...")
+    files = collect_files(repo_path, allowed_extensions)
+
+    print(f"{len(files)} arquivos encontrados.")
+
+    print("Dividindo em partes...")
+    chunks = split_into_chunks(files, repo_path, args.max_words)
+
+    print(f"{len(chunks)} arquivos serão gerados.")
+
+    print("Salvando...")
+    save_chunks(chunks, args.output_dir)
+
+    print("Concluído com sucesso.")
+
+
+if __name__ == "__main__":
+    main()
+
+
+==================== FILE ====================
+PATH: requirements.txt
+
+
+==================== FILE ====================
+langchain
+langgraph
+streamlit
+langchain-openai
+langchain-google-genai
+openai
+boto3
+

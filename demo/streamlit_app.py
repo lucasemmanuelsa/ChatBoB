@@ -91,9 +91,8 @@ Para testarmos a inteligência do agente, preciso que em **pelo menos duas pergu
         
 Exemplos de como você pode testar os limites dele:
 
-- **Se ele pedir "dois ou mais" itens:** Tente passar apenas um.
-- **Se ele pedir "até 3" itens:** Tente falar 4 ou mais.
-- **Respostas fora do padrão:** Tente dar respostas que não respondam diretamente ao que foi pedido ou diga que não quer responder.
+- Se ele pedir uma **determinada quantidade de itens**, você pode experimentar responder a quantidade correta algumas vezes, outras não.
+- **Respostas fora do padrão:** Você pode dar respostas que não respondam diretamente ao que foi pedido ou tentar dizer que não quer responder.
 - **Dúvidas:** Se você não entender o que ele quer, pode perguntar diretamente ao ChatBoB.
 
 Às demais perguntas, responda naturalmente. O objetivo é observar como o ChatBoB lida com essas situações.
@@ -118,8 +117,13 @@ if state.get("status_finished") and state.get("final_json"):
         state["_session_saved"] = True
 
     last_message = state["messages"][-1] if state["messages"] else {}
-    if last_message.get("role") != "assistant" or "extração finalizada" not in last_message.get("content", "").lower():
-        final_message = "🎉 **Extração finalizada!** Aqui está o resultado estruturado:\n\n```json\n" + json.dumps(state["final_json"], indent=2, ensure_ascii=False) + "\n```"
+    if last_message.get("role") != "assistant" or "muito obrigado por participar" not in last_message.get("content", "").lower():
+        final_message = """
+🎉 **Extração finalizada com sucesso!**
+
+Muito obrigado por participar deste experimento. Suas respostas foram registradas e ajudarão muito na minha pesquisa de TCC.
+Você já pode fechar esta janela.
+"""
         state["messages"].append({
             "role": "assistant", 
             "content": final_message
@@ -146,22 +150,5 @@ else:
     # Mostra mensagem quando finalizado
     st.info("✅ Extração concluída! O agente coletou todas as informações necessárias.")
 
-
-# -------------------------
-#  BLOCO DEBAIXO DO CHAT — STATE + LOGS
-# -------------------------
-
 st.markdown("---")
 
-with st.expander("📌 Estado Atual do Agente"):
-    st.json({
-        "extracted": state.get("extracted"),
-        "missing_fields": state.get("missing_fields"),
-        "next": state.get("next"),
-        "last_asked_question": state.get("last_asked_question"),
-        "status_finished": state.get("status_finished"),
-    })
-
-with st.expander("📜 Logs do Agente"):
-    for log in state.get("logs", []):
-        st.write("•", log)
