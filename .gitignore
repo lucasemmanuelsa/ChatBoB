@@ -1,0 +1,4 @@
+conversation_logs/
+.env
+.toml
+.streamlit/

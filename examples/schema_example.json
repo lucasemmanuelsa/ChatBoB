@@ -1,22 +1,37 @@
 {
-  "generos_musicais_favoritos": {
-    "description": "Gêneros musicais que o usuário mais aprecia e costuma ouvir com maior frequência.",
-    "type": "string",
+  "culinarias_preferidas": {
+    "description": "Duas ou mais culinárias que o usuário gosta de consumir com mais frequência (ex: italiana, japonesa, nordestina).",
+    "type": "List",
     "required": true
   },
-  "generos_musicais_avessos": {
-    "description": "Gêneros musicais que o usuário menos gosta de ouvir.",
-    "type": "string",
+
+  "culinarias_evitar": {
+    "description": "Uma ou mais culinárias que o usuário evita ou não gosta.",
+    "type": "List",
     "required": true
   },
-  "artistas_favoritos": {
-    "description": "Artistas preferidos do usuário cujas músicas ele costuma ouvir com mais frequência.",
-    "type": "string",
+
+  "frequencia_delivery_semanal": {
+    "description": "Número aproximado de vezes por semana que o usuário pede comida por delivery.",
+    "type": "Number",
     "required": true
   },
-  "musicas_favoritas": {
-    "description": "Músicas favoritas do usuário, geralmente até cinco.",
-    "type": "string",
+
+  "locais_favoritos": {
+    "description": "Até três locais (restaurantes, lanchonetes ou estabelecimentos) que o usuário mais gosta de comer ou pedir comida.",
+    "type": "List",
+    "required": true
+  },
+
+  "horario_preferido_pedido": {
+    "description": "Período do dia em que o usuário costuma pedir comida. Os resultados possíveis são apenas manhã, tarde, ou noite. Se a resposta do usuário contiver essa informação implicitamente, o resultado pode ser inferido sem fazer perguntas adicionais ao usuário. Por exemplo, almoço pode ser inferido para tarde, jantar pode ser inferido para noite. Coletar essa informação apenas se o usuário pedir delivery com frequência igual ou superior a duas vezes por semana.",
+    "type": "String",
+    "required": false
+  },
+
+  "endereco_entrega": {
+    "description": "Endereço completo onde o usuário costuma receber pedidos, de preferência com um ponto de referência.",
+    "type": "String",
     "required": true
   }
 }

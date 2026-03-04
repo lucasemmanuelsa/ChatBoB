@@ -1,6 +1,7 @@
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END
 import json
+from datetime import datetime
 from app.core.llm import get_llm
 from app.core.prompts import (
     IDENTIFY_MISSING_FIELDS_PROMPT,
@@ -19,9 +20,10 @@ def starter_node(state):
     state["logs"].append("STARTER: Iniciando classificação de intenção...")
 
     intent = chain.invoke({
-            "context_messages" : state.get("context_messages"),
+            "context_messages": state.get("context_messages"),
             "last_asked_question": state.get("last_asked_question"),
-            "last_user_message": state.get("last_user_message")
+            "last_user_message": state.get("last_user_message"),
+            "schema": state["schema"].fields
     }
     ).content.strip().upper()
 
@@ -41,6 +43,7 @@ def extractor_node(state):
 
     resp = chain.invoke({
         "schema": state["schema"].fields,
+        "context_messages" : state.get("context_messages"),
         "last_user_message": state["last_user_message"],
         "last_asked_question": state["last_asked_question"],
         "extracted": state["extracted"]
@@ -51,6 +54,7 @@ def extractor_node(state):
         partial = json.loads(resp)
     except Exception:
         partial = {}
+        state['logs'].append("EXTRACTOR: falha ao parsear JSON, extraído vazio.")
     
     extracted = state["extracted"]
     extracted.update(partial)
@@ -64,9 +68,10 @@ def missing_node(state):
     template = ChatPromptTemplate.from_template(IDENTIFY_MISSING_FIELDS_PROMPT)
     chain = template | llm
 
-    resp = chain.invoke({
+    resp = chain.invoke({ 
         "schema": state["schema"].fields,
-        "extracted": state["extracted"]
+        "extracted": state["extracted"],
+        "context_messages": state.get("context_messages")
     }).content.strip()
 
 
@@ -77,6 +82,7 @@ def missing_node(state):
         schema_fields = state["schema"].fields
         extracted = state.get("extracted", {})
         missing = [field for field in schema_fields if field not in extracted or not extracted[field]]
+        state["logs"].append("MISSING: falha ao parsear JSON, usando lógica fallback.")
 
     state["logs"].append(f"MISSING: campos faltantes identificados: {missing}")
 
@@ -122,11 +128,14 @@ def ask_node(state):
 def output_node(state):
     template = ChatPromptTemplate.from_template(FINAL_JSON_PROMPT)
     chain = template | llm
-    state["logs"].append("OUTPUT: gerando JSON final...")
+    
+    current_time_str = datetime.now().isoformat()
+    state["logs"].append(f"OUTPUT: gerando JSON final com timestamp {current_time_str}...")
+    
     resp = chain.invoke({
         "schema": state["schema"].fields,
         "extracted": state["extracted"],
-        "missing": state["missing_fields"]
+        "current_time": current_time_str
     }).content.strip()
 
     state["logs"].append(f"OUTPUT: JSON final gerado: {resp}")

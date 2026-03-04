@@ -1,0 +1,17 @@
+{
+  "nivel_atividade_fisica": {
+    "description": "Classificação geral do nível de atividade física do usuário: sedentário, moderado ou ativo.",
+    "type": "String",
+    "required": true
+  },
+  "atividades_praticadas": {
+    "description": "Até três atividades físicas que o usuário pratica atualmente. Caso o usuário pratique mais, o agente deve pedir que ele selecione as mais frequentes.",
+    "type": "List",
+    "required": true
+  },
+  "restricoes_fisicas": {
+    "description": "Restrições físicas ou limitações relevantes para a prática de atividades físicas, se existirem.",
+    "type": "List",
+    "required": false
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "destino_principal": {
+    "description": "Cidade ou país que o usuário deseja visitar como destino principal da viagem.",
+    "type": "String",
+    "required": true
+  },
+  "duracao_viagem_dias": {
+    "description": "Quantidade total de dias da viagem, considerando ida e volta. Deve ser um número inteiro maior que zero.",
+    "type": "Number",
+    "required": true
+  },
+  "interesses_viagem": {
+    "description": "De um a três interesses principais da viagem, como gastronomia, natureza, compras ou cultura.",
+    "type": "List",
+    "required": true
+  },
+  "cidades_secundarias": {
+    "description": "Até duas cidades adicionais que o usuário pretende visitar, apenas se a duração da viagem for maior que 5 dias.",
+    "type": "List",
+    "required": false
+  }
+}

@@ -1,5 +1,7 @@
 langchain
 langgraph
-google-genai
 streamlit
-langchain_google_genai
+langchain-openai
+langchain-google-genai
+openai
+boto3
