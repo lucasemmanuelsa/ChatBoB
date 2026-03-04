@@ -1,4 +1,4 @@
-# Chat Data Extractor
+# ChatBoB - Agente Conversacional Genérico Guiado por Esquema Baseado em Arquitetura Multiagente para Extração de Informações
 
 Um agente inteligente projetado para extrair dados estruturados a partir de conversas naturais. Ele atua fazendo perguntas estratégicas ao usuário para preencher um schema JSON pré-definido, lidando com restrições, validações e normalização de dados automaticamente.
 
