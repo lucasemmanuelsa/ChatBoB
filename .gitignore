@@ -2,3 +2,5 @@ conversation_logs/
 .env
 .toml
 .streamlit/
+consolidado_geral.txt
+resultados/
