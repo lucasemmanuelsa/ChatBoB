@@ -140,35 +140,54 @@ for msg in user_inputs:
 
 ---
 
-## 📂 Estrutura do JSON
+## 📂 Exemplo Prático: Coletor de Preferências Culinárias
 
-O agente produz um JSON final padronizado contendo metadados e os dados extraídos.
+Para ilustrar o poder do agente, utilizamos um **Schema Culinário** completo, exigindo preferências, restrições e endereços.
 
-**Exemplo de Schema de Entrada:**
+### 1. Schema de Entrada (`schema.json`)
+Definimos os campos que queremos extrair, suas descrições e regras de obrigatoriedade.
+
 ```json
 {
-  "generos_musicais": {
-    "description": "Gêneros musicais que o usuário gosta",
+  "culinarias_preferidas": {
+    "description": "Duas ou mais culinárias que o usuário gosta de consumir com mais frequência (ex: italiana, japonesa, nordestina).",
     "type": "List",
+    "required": true
+  },
+  "culinarias_evitar": {
+    "description": "Uma ou mais culinárias que o usuário evita ou não gosta.",
+    "type": "List",
+    "required": true
+  },
+  "frequencia_delivery_semanal": {
+    "description": "Número aproximado de vezes por semana que o usuário pede comida por delivery.",
+    "type": "Number",
+    "required": true
+  },
+  "horario_preferido_pedido": {
+    "description": "Período do dia em que o usuário costuma pedir comida (manhã, tarde, noite).",
+    "type": "String",
+    "required": false
+  },
+  "endereco_entrega": {
+    "description": "Endereço completo onde o usuário costuma receber pedidos.",
+    "type": "String",
     "required": true
   }
 }
 ```
 
-**Exemplo de Saída (JSON Final):**
-```json
-{
-  "metadata": {
-    "created_at": "2026-02-25T14:00:00Z",
-    "source": "chat-session",
-    "schema_version": "1.0"
-  },
-  "data": {
-    "generos_musicais": ["rock", "jazz"]
-  },
-  "missing_fields": []
-}
-```
+### 2. Interação Natural (Exemplo de Chat)
+O agente conduz a conversa de forma fluida para preencher o schema.
+
+![Interação no Chat](imgs/dialogo1white.png)
+![Continuação do Chat](imgs/dialogue2whiteok.png)
+![Finalização](imgs/dialogo3white.png)
+
+### 3. Resultado Gerado (JSON Final)
+Ao final da conversa, o agente gera um JSON estruturado e validado, pronto para ser consumido por uma API ou banco de dados.
+
+![JSON Resultante](imgs/resultadowhite.png)
 
 ---
 
