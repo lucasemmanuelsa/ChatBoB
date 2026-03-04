@@ -3,3 +3,4 @@ conversation_logs/
 .toml
 .streamlit/
 resultados/
+consolidado_geral.txt
