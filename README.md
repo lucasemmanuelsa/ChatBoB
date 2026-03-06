@@ -39,8 +39,8 @@ O fluxo de trabalho do agente segue um ciclo contínuo de análise e interação
 
 1. Clone o repositório:
    ```bash
-   git clone https://github.com/seu-usuario/chat-data-extractor.git
-   cd chat-data-extractor
+   git clone https://github.com/lucasemmanuelsa/ChatBoB.git
+   cd ChatBoB
    ```
 
 2. Instale as dependências:
