@@ -154,23 +154,33 @@ Definimos os campos que queremos extrair, suas descrições e regras de obrigato
     "type": "List",
     "required": true
   },
+
   "culinarias_evitar": {
     "description": "Uma ou mais culinárias que o usuário evita ou não gosta.",
     "type": "List",
     "required": true
   },
+
   "frequencia_delivery_semanal": {
     "description": "Número aproximado de vezes por semana que o usuário pede comida por delivery.",
     "type": "Number",
     "required": true
   },
+
+  "locais_favoritos": {
+    "description": "Até três locais (restaurantes, lanchonetes ou estabelecimentos) que o usuário mais gosta de comer ou pedir comida.",
+    "type": "List",
+    "required": true
+  },
+
   "horario_preferido_pedido": {
-    "description": "Período do dia em que o usuário costuma pedir comida (manhã, tarde, noite).",
+    "description": "Período do dia em que o usuário costuma pedir comida. Os resultados possíveis são apenas manhã, tarde, ou noite. Se a resposta do usuário contiver essa informação implicitamente, o resultado pode ser inferido sem fazer perguntas adicionais ao usuário. Por exemplo, almoço pode ser inferido para tarde, jantar pode ser inferido para noite. Coletar essa informação apenas se o usuário pedir delivery com frequência igual ou superior a duas vezes por semana.",
     "type": "String",
     "required": false
   },
+
   "endereco_entrega": {
-    "description": "Endereço completo onde o usuário costuma receber pedidos.",
+    "description": "Endereço completo onde o usuário costuma receber pedidos, de preferência com um ponto de referência.",
     "type": "String",
     "required": true
   }
