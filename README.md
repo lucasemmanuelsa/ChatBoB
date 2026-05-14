@@ -191,13 +191,36 @@ Definimos os campos que queremos extrair, suas descrições e regras de obrigato
 O agente conduz a conversa de forma fluida para preencher o schema.
 
 ![Interação no Chat](imgs/dialogo1white.png)
-![Continuação do Chat](imgs/dialogue2whiteok.png)
-![Finalização](imgs/dialogo3white.png)
 
 ### 3. Resultado Gerado (JSON Final)
-Ao final da conversa, o agente gera um JSON estruturado e validado, pronto para ser consumido por uma API ou banco de dados.
+Ao final da conversa, o agente gera um JSON estruturado e validado, pronto para ser consumido por uma API ou banco de dados, seguindo a estrutura abaixo.
 
-![JSON Resultante](imgs/resultadowhite.png)
+```json
+{
+  "metadata": {
+    "created_at": "<timestamp da criação do registro no formato ISO 8601>",
+    "source": "<nome ou identificador do agente/sistema responsável pela extração>",
+    "schema_version": "<versão do schema utilizado para estruturar a saída>"
+  },
+  "data": {
+    "culinarias_preferidas": [
+      "<lista de culinárias que o usuário prefere ou consome com frequência>"
+    ],
+    "culinarias_evitar": [
+      "<lista de culinárias que o usuário prefere evitar ou não gosta>"
+    ],
+    "frequencia_delivery_semanal": "<quantidade média de pedidos por semana>",
+    "locais_favoritos": [
+      "<lista de restaurantes, bares ou locais mencionados como favoritos>"
+    ],
+    "horario_preferido_pedido": "<horário ou faixa de horário preferida para realizar pedidos, ou null caso não informado>",
+    "endereco_entrega": "<endereço principal informado para entrega, ou null caso não informado>"
+  },
+  "missing_fields": [
+    "<lista de campos obrigatórios ou esperados que não foram preenchidos>"
+  ]
+}
+```
 
 ---
 
