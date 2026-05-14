@@ -1,112 +1,119 @@
-# ChatBoB - Agente Conversacional Genérico Guiado por Esquema Baseado em Arquitetura Multiagente para Extração de Informações
+# ChatBoB - Generic Schema-Guided Conversational Agent Based on a Multi-Agent Architecture for Information Extraction
 
-Um agente inteligente projetado para extrair dados estruturados a partir de conversas naturais. Ele atua fazendo perguntas estratégicas ao usuário para preencher um schema JSON pré-definido, lidando com restrições, validações e normalização de dados automaticamente.
-
----
-
-## 🚀 Funcionalidades
-
-- **Extração Baseada em Schema**: Utiliza um padrão JSON Schema recomendado (`description`, `type`, `required`) para guiar a extração com precisão.
-- **Questionamento Dinâmico**: O agente decide qual pergunta fazer com base nos campos que faltam (`missing_fields`).
-- **Gestão de Restrições**: Respeita regras lógicas (ex: só perguntar X se Y for respondido).
-- **Validação e Normalização**: Converte respostas coloquiais (ex: "gosto de rock") em dados estruturados (ex: `["rock"]`).
-- **Agnóstico de Interface**: Pode ser usado com Streamlit, API REST, CLI ou qualquer outra interface.
+An intelligent agent designed to extract structured data from natural conversations. It interacts with users by asking strategic questions to fill a predefined JSON schema, automatically handling constraints, validation, and data normalization.
 
 ---
 
-## 🧠 Como o Agente Atua
+## 🚀 Features
 
-O fluxo de trabalho do agente segue um ciclo contínuo de análise e interação:
-
-1.  **Recebe o Schema**: O agente carrega as definições dos campos (tipos, descrições, obrigatoriedade).
-2.  **Analisa o Estado**: Verifica o histórico da conversa e identifica quais campos obrigatórios ainda estão vazios.
-3.  **Decide a Próxima Ação**:
-    *   Se faltam dados: Gera uma pergunta natural para o usuário.
-    *   Se o usuário respondeu: Extrai as informações, valida e atualiza o JSON final.
-4.  **Verifica Restrições**: Antes de perguntar, checa se as pré-condições do campo foram atendidas (dependências entre campos).
-5.  **Finaliza**: Quando todos os campos obrigatórios estão preenchidos, entrega o JSON estruturado.
+- **Schema-Based Extraction**: Uses a recommended JSON Schema pattern (`description`, `type`, `required`) to guide accurate information extraction.
+- **Dynamic Questioning**: The agent decides which question to ask next based on missing fields (`missing_fields`).
+- **Constraint Management**: Respects logical rules (e.g., only asks field X if field Y has already been answered).
+- **Validation and Normalization**: Converts natural responses (e.g., *"I like rock music"*) into structured data (e.g., `["rock"]`).
+- **Interface Agnostic**: Can be integrated with Streamlit, REST APIs, CLI applications, or any other interface.
 
 ---
 
-## 🛠️ Configuração e Instalação
+## 🧠 How the Agent Works
 
-### Pré-requisitos
+The agent follows a continuous analysis and interaction cycle:
+
+1. **Load the Schema**  
+   The agent reads the field definitions (types, descriptions, and required fields).
+
+2. **Analyze the Current State**  
+   It checks the conversation history and identifies which required fields are still missing.
+
+3. **Decide the Next Action**
+   - If data is missing: generates a natural follow-up question.
+   - If the user answered: extracts the information, validates it, and updates the final JSON.
+
+4. **Check Constraints**  
+   Before asking a question, it verifies whether field preconditions have been satisfied (field dependencies).
+
+5. **Finish**  
+   Once all required fields are filled, the agent returns the final structured JSON.
+
+---
+
+## 🛠️ Setup and Installation
+
+### Prerequisites
 
 - Python 3.10+
-- Chave de API da OpenAI (ou outra LLM configurada)
-
-### Instalação
-
-1. Clone o repositório:
-   ```bash
-   git clone https://github.com/lucasemmanuelsa/ChatBoB.git
-   cd ChatBoB
-   ```
-
-2. Instale as dependências:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Configure as credenciais:
-   Este projeto usa `streamlit.secrets` por padrão. Crie um arquivo `.streamlit/secrets.toml`:
-
-   ```toml
-   open_ai_key = "sk-..."
-   ```
-
-   > **Nota:** Para uso fora do Streamlit, certifique-se de configurar a variável de ambiente `OPENAI_API_KEY` ou adaptar o arquivo `app/core/llm.py`.
+- OpenAI API key (or another configured LLM provider)
 
 ---
 
-## 🖥️ Executando a Demo (Streamlit)
+### Installation
 
-O projeto inclui uma interface gráfica para testar o agente em tempo real.
+1. Clone the repository:
+
+2. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+3. Configure credentials:
+
+This project uses `streamlit.secrets` by default. Create a file named `.streamlit/secrets.toml`:
+
+```toml
+open_ai_key = "sk-..."
+```
+
+> **Note:** If running outside Streamlit, configure the `OPENAI_API_KEY` environment variable or adapt the `app/core/llm.py` file.
+
+---
+
+## 🖥️ Running the Demo (Streamlit)
+
+The project includes a graphical interface for testing the agent in real time.
 
 ```bash
 streamlit run demo/streamlit_app.py
 ```
 
-Isso abrirá uma interface de chat onde você pode interagir com o agente e ver o JSON sendo construído ao vivo.
+This opens a chat interface where you can interact with the agent and observe the JSON being built live.
 
 ---
 
-## 💻 Guia do Desenvolvedor: Uso Programático
+## 💻 Developer Guide: Programmatic Usage
 
-O `Chat Data Extractor` foi desenhado para ser modular. Você pode integrar o `ExtractorAgent` em sua própria aplicação (backend API, bot de Discord/WhatsApp, CLI) sem depender do Streamlit.
+`ChatBoB` was designed to be modular. You can integrate `ExtractorAgent` into your own application (backend API, Discord/WhatsApp bot, CLI, etc.) without depending on Streamlit.
 
-### Exemplo de Implementação
+---
 
-Aqui está como instanciar e usar o agente diretamente em Python:
+### Example Implementation
 
 ```python
 from app.core.extractor import ExtractorAgent, Schema
 
-# 1. Defina o Schema (pode vir de um arquivo JSON também)
-# Exemplo de schema simplificado
+# 1. Define the Schema (can also be loaded from a JSON file)
 schema_dict = {
-  "nome": {
-    "type": "string", 
-    "description": "Nome do usuário", 
+  "name": {
+    "type": "string",
+    "description": "User's name",
     "required": True
   },
-  "idade": {
-    "type": "integer", 
-    "description": "Idade do usuário", 
+  "age": {
+    "type": "integer",
+    "description": "User's age",
     "required": True
   }
 }
-meu_schema = Schema(schema_dict) 
-# Ou Schema.load_from_file("schema.json")
 
-# 2. Inicialize o Agente
-agent = ExtractorAgent(schema=meu_schema)
+my_schema = Schema(schema_dict)
+# or Schema.load_from_file("schema.json")
 
-# 3. Inicialize o Estado da Conversa
-# O estado mantém o histórico e o progresso da extração
+# 2. Initialize the Agent
+agent = ExtractorAgent(schema=my_schema)
+
+# 3. Initialize the Conversation State
 state = {
     "last_user_message": "",
-    "schema": meu_schema,
+    "schema": my_schema,
     "extracted": {},
     "missing_fields": [],
     "context_messages": [],
@@ -114,127 +121,132 @@ state = {
     "logs": []
 }
 
-# 4. Loop de Conversação (Simulação CLI)
-user_inputs = ["Olá", "Me chamo Lucas", "Tenho 25 anos"]
+# 4. Conversation Loop (CLI simulation)
+user_inputs = ["Hello", "My name is Anon", "I am X years old"]
 
-print("--- Iniciando Sessão ---")
+print("--- Starting Session ---")
+
 for msg in user_inputs:
     print(f"User: {msg}")
-    
-    # Alimenta a mensagem no grafo do agente
+
     result_state = agent.feed_message(msg, state)
-    
-    # Atualiza o estado com o retorno
     state.update(result_state)
-    
-    # Acessa a pergunta gerada ou o JSON final
+
     if state.get("question_to_ask"):
         print(f"Agent: {state['question_to_ask']}")
-    
-    # Verifica se terminou
+
     if state.get("status_finished"):
-        print("\n--- Extração Completa! ---")
+        print("\n--- Extraction Complete! ---")
         print(state["final_json"])
         break
 ```
 
 ---
 
-## 📂 Exemplo Prático: Coletor de Preferências Culinárias
+# 📂 Practical Example: Culinary Preferences Collector
 
-Para ilustrar o poder do agente, utilizamos um **Schema Culinário** completo, exigindo preferências, restrições e endereços.
+To demonstrate the agent’s capabilities, we use a **Culinary Preferences Schema**, which requires collecting preferences, restrictions, delivery habits, and address information.
 
-### 1. Schema de Entrada (`schema.json`)
-Definimos os campos que queremos extrair, suas descrições e regras de obrigatoriedade.
+---
+
+## 1. Input Schema (`schema.json`)
+
+We define the fields we want to extract, their descriptions, and validation requirements.
 
 ```json
 {
-  "culinarias_preferidas": {
-    "description": "Duas ou mais culinárias que o usuário gosta de consumir com mais frequência (ex: italiana, japonesa, nordestina).",
+  "favorite_cuisines": {
+    "description": "Two or more cuisines that the user likes to consume most frequently (e.g., Italian, Japanese, Brazilian Northeastern cuisine).",
     "type": "List",
     "required": true
   },
 
-  "culinarias_evitar": {
-    "description": "Uma ou mais culinárias que o usuário evita ou não gosta.",
+  "cuisines_to_avoid": {
+    "description": "One or more cuisines that the user avoids or does not like.",
     "type": "List",
     "required": true
   },
 
-  "frequencia_delivery_semanal": {
-    "description": "Número aproximado de vezes por semana que o usuário pede comida por delivery.",
+  "weekly_delivery_frequency": {
+    "description": "Approximate number of times per week that the user orders food delivery.",
     "type": "Number",
     "required": true
   },
 
-  "locais_favoritos": {
-    "description": "Até três locais (restaurantes, lanchonetes ou estabelecimentos) que o usuário mais gosta de comer ou pedir comida.",
+  "favorite_places": {
+    "description": "Up to three places (restaurants, snack bars, or food establishments) where the user most enjoys eating or ordering food.",
     "type": "List",
     "required": true
   },
 
-  "horario_preferido_pedido": {
-    "description": "Período do dia em que o usuário costuma pedir comida. Os resultados possíveis são apenas manhã, tarde, ou noite. Se a resposta do usuário contiver essa informação implicitamente, o resultado pode ser inferido sem fazer perguntas adicionais ao usuário. Por exemplo, almoço pode ser inferido para tarde, jantar pode ser inferido para noite. Coletar essa informação apenas se o usuário pedir delivery com frequência igual ou superior a duas vezes por semana.",
+  "preferred_order_time": {
+    "description": "Period of the day when the user usually orders food. Possible values are only morning, afternoon, or night. If the user's answer contains this information implicitly, the result may be inferred without asking additional questions. For example, lunch may be inferred as afternoon, and dinner may be inferred as night. Collect this information only if the user orders delivery at least twice per week.",
     "type": "String",
     "required": false
   },
 
-  "endereco_entrega": {
-    "description": "Endereço completo onde o usuário costuma receber pedidos, de preferência com um ponto de referência.",
+  "delivery_address": {
+    "description": "Complete address where the user usually receives deliveries, preferably including a landmark or reference point.",
     "type": "String",
     "required": true
   }
 }
 ```
 
-### 2. Interação Natural (Exemplo de Chat)
-O agente conduz a conversa de forma fluida para preencher o schema.
+---
 
-![Interação no Chat](imgs/dialogo1white.png)
+## 2. Natural Interaction (Chat Example)
 
-### 3. Resultado Gerado (JSON Final)
-Ao final da conversa, o agente gera um JSON estruturado e validado, pronto para ser consumido por uma API ou banco de dados, seguindo a estrutura abaixo.
+The agent conducts the conversation naturally in order to fill the schema.
+
+![Chat Interaction](imgs/example1_chat.png)
+
+---
+
+## 3. Generated Output (Final JSON)
+
+At the end of the conversation, the agent produces a validated structured JSON ready to be consumed by APIs or databases.
 
 ```json
 {
   "metadata": {
-    "created_at": "<timestamp da criação do registro no formato ISO 8601>",
-    "source": "<nome ou identificador do agente/sistema responsável pela extração>",
-    "schema_version": "<versão do schema utilizado para estruturar a saída>"
+    "created_at": "<ISO 8601 timestamp>",
+    "source": "<agent/system identifier>",
+    "schema_version": "<schema version used>"
   },
   "data": {
-    "culinarias_preferidas": [
-      "<lista de culinárias que o usuário prefere ou consome com frequência>"
+    "favorite_cuisines": [
+      "<list of preferred cuisines>"
     ],
-    "culinarias_evitar": [
-      "<lista de culinárias que o usuário prefere evitar ou não gosta>"
+    "cuisines_to_avoid": [
+      "<list of avoided cuisines>"
     ],
-    "frequencia_delivery_semanal": "<quantidade média de pedidos por semana>",
-    "locais_favoritos": [
-      "<lista de restaurantes, bares ou locais mencionados como favoritos>"
+    "weekly_delivery_frequency": "<average number of orders per week>",
+    "favorite_places": [
+      "<list of favorite restaurants or establishments>"
     ],
-    "horario_preferido_pedido": "<horário ou faixa de horário preferida para realizar pedidos, ou null caso não informado>",
-    "endereco_entrega": "<endereço principal informado para entrega, ou null caso não informado>"
+    "preferred_order_time": "<preferred ordering time or null>",
+    "delivery_address": "<delivery address or null>"
   },
   "missing_fields": [
-    "<lista de campos obrigatórios ou esperados que não foram preenchidos>"
+    "<list of required or expected fields that were not filled>"
   ]
 }
 ```
 
 ---
 
-## 📁 Estrutura do Projeto
+# 📁 Project Structure
 
-```
-chat-data-extractor/
+```text
+ChatBoB/
 ├── app/
-│   ├── core/           # Lógica central (LLM, Agente, Schema)
-│   └── graph/          # Definição do Grafo (LangGraph)
-├── demo/               # Interface Streamlit
-├── conversation_logs/  # Histórico salvo das sessões
-├── requirements.txt    # Dependências
-└── README.md           # Documentação
+│   ├── core/           # Core logic (LLM, Agent, Schema)
+│   └── graph/          # LangGraph workflow definition
+├── demo/               # Streamlit interface
+├── conversation_logs/  # Saved conversation sessions
+├── requirements.txt    # Project dependencies
+└── README.md           # Documentation
 ```
 
 A arquitetura utiliza **LangGraph** para gerenciar o fluxo de estado, permitindo ciclos complexos de decisão (ex: verificar se falta informação -> perguntar -> extrair -> verificar novamente) de forma robusta e tipada.
