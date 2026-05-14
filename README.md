@@ -250,3 +250,71 @@ ChatBoB/
 ```
 
 A arquitetura utiliza **LangGraph** para gerenciar o fluxo de estado, permitindo ciclos complexos de decisão (ex: verificar se falta informação -> perguntar -> extrair -> verificar novamente) de forma robusta e tipada.
+
+
+---
+
+# 📊 Reproducing Experimental Results
+
+The experimental results reported in the paper can be reproduced using the plotting scripts available in this repository.
+
+## 1. Prepare the Results Directory
+
+Create a folder named `resultados/` in the project root directory:
+
+```text
+ChatBoB/
+├── resultados/
+│   └── <experimental result files will be published soon>
+```
+
+> **Note:** The raw experimental data used in the paper will be made publicly available in this folder.
+
+---
+
+## 2. Generate the Figures
+
+After adding the result files to the `resultados/` folder, run the following scripts:
+
+### Constraint Adherence
+
+```bash
+python plot_constraint_adherence.py
+```
+
+Generates the figure related to **constraint satisfaction/adherence**.
+
+---
+
+### Conversational Efficiency
+
+```bash
+python plot_conversational_efficiency.py
+```
+
+Generates the figure related to **average conversational efficiency**.
+
+---
+
+### Field Completion Rate
+
+```bash
+python plot_field_completion_rate.py
+```
+
+Generates the figure related to **field completion rate**.
+
+---
+
+## 3. Agent Name Mapping (Paper ↔ Code)
+
+Some agent names used in the paper differ from the internal implementation names used in the codebase.
+
+| Paper Name | Code Name | Description |
+|-----------|-----------|-------------|
+| `ENQUIRER` | `ASK` | Responsible for generating the next question to the user |
+| `COMPLETENESS` | `MISSING` | Responsible for identifying missing fields in the schema |
+
+This mapping is important when analyzing logs or inspecting the source code implementation.
+
+---
