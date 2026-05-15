@@ -313,7 +313,7 @@ Some agent names used in the paper differ from the internal implementation names
 | Paper Name | Code Name | Description |
 |-----------|-----------|-------------|
 | `ENQUIRER` | `ASK` | Responsible for generating the next question to the user |
-| `COMPLETENESS` | `MISSING` | Responsible for identifying missing fields in the schema |
+| `CHECKER` | `MISSING` | Responsible for identifying missing fields in the schema |
 
 This mapping is important when analyzing logs or inspecting the source code implementation.
 
